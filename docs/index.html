@@ -1,0 +1,44 @@
+<!DOCTYPE HTML>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1.0">
+        <title>The Great Outdoors</title>
+        <style>
+            html, body, #a, .e {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background-color: #000;
+            }
+
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+
+            .e {
+                background-color: #A00;
+                padding: 1em;
+                color: #AAA;
+            }
+        </style>
+    </head>
+    <body>
+        <svg id="es" class="e" viewBox="0 0 9 1.5" style="display: none">
+            <text font-size="1" font-family="'Roboto', sans-serif" y="1">
+                Unsupported Device
+            </text>
+        </svg>
+        <svg id="ee" class="e" viewBox="0 0 6.8 1.5" style="display: none">
+                <text font-size="1" font-family="'Roboto', sans-serif" y="1">
+                    Execution Error
+                </text>
+            </svg>
+        <canvas id="a"></canvas>
+        <script src="btb.js"></script>
+    </body>
+</html>
