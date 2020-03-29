@@ -15,6 +15,7 @@
 #define B_STRINGIFY0(_x) #_x
 #define B_STRINGIFY1(_x) #_x
 #define B_STRINGIFY(_x) #_x
+#define B_ARRAYLENGTH(_x) (sizeof(_x)/sizeof((_x)[0]))
 
 #define B_COMP_CLANG 1
 #define B_COMP_MSVC 2

@@ -13,13 +13,71 @@ function e(str) {
 }
 
 var P_PALETTE_SIZE = 0x10;
+var P_VERTEX_SIZE = 0x0C;
 
 var P_OUTPUT_BUFFER_COMMAND_SET_PALETTE = 0x01;
 var P_OUTPUT_BUFFER_COMMAND_CLEAR_COLOR = 0x02;
+var P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH = 0x03;
+var P_OUTPUT_BUFFER_COMMAND_RENDER_MESH = 0x04;
+var P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH = 0x05;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW = 0xF0;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_PRINT = 0xF1;
 var P_INPUT_BUFFER_COMMAND_SET_DPAD = 0x01;
 var P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE = 0x04;
+
+var VERT_SHADER = [
+    "uniform vec4 palette[0x10];",
+    "",
+    "attribute vec2 vPosition;",
+    "attribute float vPaletteIndex;",
+    "",
+    "varying vec4 fColor;",
+    "",
+    "void main() {",
+    "  gl_Position = vec4(vPosition, 0, 1);",
+    //"  fColor = vec4(vPosition, 0, 0);",
+    "  fColor = palette[int(vPaletteIndex)];",
+    "}"
+].join("\n");
+var FRAG_SHADER = [
+    "precision mediump float;",
+    "",
+    "varying vec4 fColor;",
+    "",
+    "void main() {",
+    "  gl_FragColor = fColor;",
+    "}"
+].join("\n");
+
+function createShader(gl, vertSource, fragSource) {
+    var prog = gl.createProgram();
+
+    var vert = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vert, vertSource);
+    gl.compileShader(vert);
+    if(!gl.getShaderParameter(vert, gl.COMPILE_STATUS)) {
+        e(gl.getShaderInfoLog(vert));
+    }
+
+    var frag = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(frag, fragSource);
+    gl.compileShader(frag);
+    if(!gl.getShaderParameter(frag, gl.COMPILE_STATUS)) {
+        e(gl.getShaderInfoLog(frag));
+    }
+
+    gl.attachShader(prog, vert);
+    gl.attachShader(prog, frag);
+    gl.linkProgram(prog);
+    gl.deleteShader(vert);
+    gl.deleteShader(frag);
+
+    if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        e(gl.getProgramInfoLog(prog));
+    }
+
+    return prog;
+}
 
 function main() {
     var supported = true;
@@ -62,6 +120,21 @@ function main() {
             requestAnimationFrame(frame);
         });
 
+
+    /* WebGL initialization to overlap with the fetch. */
+
+    /* Create shaders: */
+    var paletteShader = createShader(gl, VERT_SHADER, FRAG_SHADER);
+
+    window["glShaders"] = {
+        palette: {
+            id: paletteShader,
+            aPosition: gl.getAttribLocation(paletteShader, "vPosition"),
+            aPaletteIndex: gl.getAttribLocation(paletteShader, "vPaletteIndex"),
+            uPalette: gl.getUniformLocation(paletteShader, "palette"),
+        },
+    };
+
     window.addEventListener("keydown", function(e) {
         if(e.key == "w" || e.key == "ArrowUp") {
             keys.up = true;
@@ -89,7 +162,8 @@ function main() {
 var lastFrameTime = 0;
 var firstFrame = true;
 var pointerTable = null;
-var palette = new Uint32Array(P_PALETTE_SIZE);
+var palette = new Float32Array(P_PALETTE_SIZE * 4);
+var glSlots = Array(0x10000);
 
 var keys = {
     up: false,
@@ -154,8 +228,6 @@ function frame() {
 
             lastCanvasWidth = newCanvasWidth;
             lastCanvasHeight = newCanvasHeight;
-
-            gl.viewport(0, 0, newCanvasWidth, lastCanvasHeight);
         }
 
         m32[ioBufferPointer] = ioBufferTop;
@@ -166,6 +238,12 @@ function frame() {
     if(pointerTable % 1 != 0) {
         e("Unaligned pointer table: 0x" + (pointerTable * 4).toString(16).toUpperCase());
     }
+
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+
+    gl.useProgram(glShaders.palette.id);
+    gl.enableVertexAttribArray(glShaders.palette.aPosition);
+    gl.enableVertexAttribArray(glShaders.palette.aPaletteIndex);
 
     m32 = new Uint32Array(wasm.instance.exports.memory.buffer);
     ioBufferPointer = m32[pointerTable]/4;
@@ -185,21 +263,94 @@ function frame() {
                 }
 
                 for(var i = 0; i < P_PALETTE_SIZE; i++) {
-                    palette[i] = m32[pointer + i];
+                    var color = m32[pointer + i];
+
+                    palette[i*4 + 0] = ((color >> 0) & 0xFF) / 0xFF;
+                    palette[i*4 + 1] = ((color >> 8) & 0xFF) / 0xFF;
+                    palette[i*4 + 2] = ((color >> 16) & 0xFF) / 0xFF;
+                    palette[i*4 + 3] = ((color >> 24) & 0xFF) / 0xFF;
                 }
 
                 break;
             };
             case P_OUTPUT_BUFFER_COMMAND_CLEAR_COLOR: {
-                var color = palette[(c >> 8) & 0x0F];
+                var index = (c >> 8) & 0x0F;
 
-                var r = (color >> 0) & 0xFF;
-                var g = (color >> 8) & 0xFF;
-                var b = (color >> 16) & 0xFF;
-                var a = (color >> 24) & 0xFF;
-
-                gl.clearColor(r / 0xFF, g / 0xFF, b / 0xFF, a / 0xFF);
+                gl.clearColor(
+                    palette[index*4 + 0],
+                    palette[index*4 + 1],
+                    palette[index*4 + 2],
+                    palette[index*4 + 3]
+                );
                 gl.clear(gl.COLOR_BUFFER_BIT);
+                break;
+            };
+            case P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH:
+            case P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH: {
+                var index = (c >> 16) & 0xFFFF;
+                var vertexNumber = m32[ioBufferBase + currentTop++];
+                var meshPointer = m32[ioBufferBase + currentTop++];
+
+                var buffer = null;
+
+                if((c & 0xFF) == P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH) {
+                    if(glSlots[index]) {
+                        e("Attempting to upload buffer into filled slot.");
+                    }
+                    buffer = gl.createBuffer();
+                } else {
+                    if(!glSlots[index]) {
+                        e("Attempting to update into unfilled slot.");
+                    }
+                    buffer = glSlots[index]
+                }
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                gl.bufferData(
+                    gl.ARRAY_BUFFER,
+                    new Float32Array(
+                        wasm.instance.exports.memory.buffer,
+                        meshPointer,
+                        (vertexNumber * P_VERTEX_SIZE) / 4
+                    ),
+                    gl.DYNAMIC_DRAW
+                );
+                glSlots[index] = buffer;
+
+                break;
+            };
+            case P_OUTPUT_BUFFER_COMMAND_RENDER_MESH: {
+                var index = (c >> 16) & 0xFFFF;
+                var startIndex = m32[ioBufferBase + currentTop++];
+                var length = m32[ioBufferBase + currentTop++];
+
+                if(!glSlots[index]) {
+                    e("Attempting to render an unfilled slot.");
+                }
+
+                var buffer = glSlots[index];
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                gl.vertexAttribPointer(
+                    glShaders.palette.aPosition,
+                    2,
+                    gl.FLOAT,
+                    false,
+                    0xC,
+                    0
+                );
+                gl.vertexAttribPointer(
+                    glShaders.palette.aPaletteIndex,
+                    1,
+                    gl.FLOAT,
+                    false,
+                    0xC,
+                    0x8
+                );
+                gl.uniform4fv(glShaders.palette.uPalette, palette);
+
+                gl.drawArrays(gl.TRIANGLES, startIndex, length);
+
                 break;
             };
             case P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW:
@@ -230,9 +381,9 @@ function frame() {
         e("IO buffer desynchronization.");
     }
 
-    firstFrame = false;
-
     requestAnimationFrame(frame);
+
+    firstFrame = false;
 }
 
 window.onload = main;

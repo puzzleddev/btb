@@ -17,6 +17,13 @@ typedef struct pStore {
 #define P_PALETTE_SIZE 0x10
 typedef bU32 pPalette[P_PALETTE_SIZE];
 
+/* @TODO: Push packed attribute into b.h */
+typedef struct __attribute__((packed)) pVertex {
+    bF32 x;
+    bF32 y;
+    bF32 p;
+} pVertex;
+
 /*
  * These are not in an enum, because their actual values need to be kept in sync
  * with the JS side of things.
@@ -38,6 +45,36 @@ typedef bU32 pPalette[P_PALETTE_SIZE];
  * - 0:1 - Palette index
  */
 #define P_OUTPUT_BUFFER_COMMAND_CLEAR_COLOR 0x02
+
+/*
+ * Uploads a mesh and binds it to an index.
+ *
+ * - 0:0   - Command byte
+ * - 0:2-3 - Index
+ * - 1     - Number of vertices.
+ * - 2     - Vertex buffer pointer
+ */
+#define P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH 0x03
+
+/*
+ * Renders a mesh with the current uniforms.
+ *
+ * - 0:0   - Command byte
+ * - 0:2-3 - Index
+ * - 1     - Start index
+ * - 2     - Vertices to draw
+ */
+#define P_OUTPUT_BUFFER_COMMAND_RENDER_MESH 0x04
+
+/*
+ * Updates a mesh.
+ *
+ * - 0:0   - Command byte
+ * - 0:2-3 - Index
+ * - 1     - Number of vertices
+ * - 2     - Vertex buffer pointer
+ */
+#define P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH 0x05
 
 /*
  * Throws a debug error.

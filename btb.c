@@ -57,18 +57,113 @@ B_INTERNAL const pPalette C_PALETTE0 = {
     C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - UNUSED */
 };
 
+B_INTERNAL pVertex C_TEST_VERTICES[] = {
+    {
+        .x = -0.5,
+        .y =  0.5,
+        .p = 1,
+    },
+    {
+        .x = -0.5,
+        .y = -0.5,
+        .p = 1,
+    },
+    {
+        .x =  0.5,
+        .y = -0.5,
+        .p = 1,
+    },
+    {
+        .x =  0.5,
+        .y = -0.5,
+        .p = 2,
+    },
+    {
+        .x = 0.5,
+        .y = 0.5,
+        .p = 2,
+    },
+    {
+        .x = -0.5,
+        .y =  0.5,
+        .p = 2,
+    },
+};
+
 B_INTERNAL const char *C_HEXCHARS = "0123456789ABCDEF";
 
 B_INTERNAL char C_ITERATION_MESSAGE[] = "TTTT iterations simulated.";
+B_INTERNAL char C_DEBUG_MESSAGE[] = "T is the value.";
 
+/* Utility */
+#define C_PI PREPROC_PI
+#define C_TAU (2*C_PI)
+
+#include "_pp.c"
+
+#if 0
+B_INTERNAL const bF32 C_SINE_TABLE[] = PREPROC_SINE;
+
+B_INTERNAL bS32 cFloor(bF32 x) {
+    return __builtin_floorf(x);
+}
+B_INTERNAL bS32 cCeil(bF32 x) {
+    return __builtin_ceilf(x);
+}
+B_INTERNAL bF32 cFMod(bF32 x, bF32 y) {
+    const bF32 a = x/y;
+    return a - cFloor(a);
+}
+B_INTERNAL bF32 cLerp(bF32 x, bF32 y, bF32 a) {
+    return x * (1 - a) + y * a;
+}
+#endif
+
+/* Output interaction */
+void cPushOutputPalette(pOutputBuffer *io, const pPalette *palette) {
+    io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_SET_PALETTE;
+    io->stack[io->top++] = (bPointer) palette;
+}
 void cPushOutputClearColor(pOutputBuffer *io, bU8 index) {
     io->stack[io->top++] = (
         ((bU32) P_OUTPUT_BUFFER_COMMAND_CLEAR_COLOR) | (((bU32) index) << 8)
     );
 }
-void cPushOutputPalette(pOutputBuffer *io, const pPalette *palette) {
-    io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_SET_PALETTE;
-    io->stack[io->top++] = (bPointer) palette;
+void cPushOutputUploadMesh(
+    pOutputBuffer *io,
+    bU16 index,
+    bU32 length,
+    pVertex *mesh
+) {
+    io->stack[io->top++] = (
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH) | (((bU32) index) << 16)
+    );
+    io->stack[io->top++] = length;
+    io->stack[io->top++] = (bPointer) mesh;
+}
+void cPushOutputUpdateMesh(
+    pOutputBuffer *io,
+    bU16 index,
+    bU32 length,
+    pVertex *mesh
+) {
+    io->stack[io->top++] = (
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH) | (((bU32) index) << 16)
+    );
+    io->stack[io->top++] = length;
+    io->stack[io->top++] = (bPointer) mesh;
+}
+void cPushOutputRenderMesh(
+    pOutputBuffer *io,
+    bU16 index,
+    bU32 start,
+    bU32 length
+) {
+    io->stack[io->top++] = (
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_RENDER_MESH) | (((bU32) index) << 16)
+    );
+    io->stack[io->top++] = start;
+    io->stack[io->top++] = length;
 }
 void cPushOutputDebugError(pOutputBuffer *io, char *message) {
     io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW;
@@ -87,6 +182,19 @@ void cPushOutputDebugPrint(pOutputBuffer *io, char *message) {
     do { \
         cPushOutputDebugPrint((_io), (_msg)); \
     } while(B_FALSE)
+
+void cSimulateTitle(cStore *store, pOutputBuffer *io, bF32 delta) {
+    B_UNUSED(store);
+    B_UNUSED(io);
+    B_UNUSED(delta);
+}
+void cDrawTitle(cStore *store, pOutputBuffer *io, bF32 alpha) {
+    B_UNUSED(store);
+    B_UNUSED(alpha);
+
+    cPushOutputClearColor(io, 0x0);
+    cPushOutputRenderMesh(io, 0, 0, B_ARRAYLENGTH(C_TEST_VERTICES));
+}
 
 void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
 
@@ -145,8 +253,8 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
     while(acc > C_FRAME_DELTA) {
         /* Fixed step here. */
 
-        if(store->flags & C_FLAG_CANVAS_CHANGED) {
-            store->flags &= ~C_FLAG_CANVAS_CHANGED;
+        if(store->state == C_STAGE_TITLE) {
+            cSimulateTitle(store, io, C_FRAME_DELTA);
         }
 
         acc -= C_FRAME_DELTA;
@@ -183,8 +291,12 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
 
         cPushOutputPalette(io, &C_PALETTE0);
 
+        cPushOutputUploadMesh(io, 0, B_ARRAYLENGTH(C_TEST_VERTICES), C_TEST_VERTICES);
+
         store->state = C_STAGE_TITLE;
     }
 
-    cPushOutputClearColor(io, 0x0);
+    if(store->state == C_STAGE_TITLE) {
+        cDrawTitle(store, io, 0);
+    }
 }
