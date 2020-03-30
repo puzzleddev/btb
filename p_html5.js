@@ -23,12 +23,16 @@ var P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH = 0x03;
 var P_OUTPUT_BUFFER_COMMAND_RENDER_MESH = 0x04;
 var P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH = 0x05;
 var P_OUTPUT_BUFFER_COMMAND_DELETE_MESH = 0x06;
+var P_OUTPUT_BUFFER_COMMAND_SET_TRANSFORMATION = 0x07;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW = 0xF0;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_PRINT = 0xF1;
 var P_INPUT_BUFFER_COMMAND_SET_DPAD = 0x01;
 var P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE = 0x04;
 
 var VERT_SHADER = [
+    "uniform mat4 globalTransform;",
+    "uniform mat4 localTransform;",
+    "",
     "uniform vec4 palette[0x10];",
     "",
     "attribute vec2 vPosition;",
@@ -37,7 +41,7 @@ var VERT_SHADER = [
     "varying vec4 fColor;",
     "",
     "void main() {",
-    "  gl_Position = vec4(vPosition, 0, 1);",
+    "  gl_Position = globalTransform * localTransform * vec4(vPosition, 0, 1);",
     "  fColor = palette[int(vPaletteIndex)];",
     "}"
 ].join("\n");
@@ -52,6 +56,9 @@ var FRAG_SHADER = [
 ].join("\n");
 
 var VERT_SHADER_MONO = [
+    "uniform mat4 globalTransform;",
+    "uniform mat4 localTransform;",
+    "",
     "uniform vec4 color;",
     "",
     "attribute vec2 vPosition;",
@@ -59,7 +66,7 @@ var VERT_SHADER_MONO = [
     "varying vec4 fColor;",
     "",
     "void main() {",
-    "  gl_Position = vec4(vPosition, 0, 1);",
+    "  gl_Position = globalTransform * localTransform * vec4(vPosition, 0, 1);",
     "  fColor = color;",
     "}"
 ].join("\n");
@@ -157,11 +164,17 @@ function main() {
             aPosition: gl.getAttribLocation(paletteShader, "vPosition"),
             aPaletteIndex: gl.getAttribLocation(paletteShader, "vPaletteIndex"),
             uPalette: gl.getUniformLocation(paletteShader, "palette"),
+
+            uGlobalT: gl.getUniformLocation(paletteShader, "globalTransform"),
+            uLocalT: gl.getUniformLocation(paletteShader, "localTransform"),
         },
         mono: {
             id: monoShader,
             aPosition: gl.getAttribLocation(monoShader, "vPosition"),
             uColor: gl.getUniformLocation(monoShader, "color"),
+
+            uGlobalT: gl.getUniformLocation(monoShader, "globalTransform"),
+            uLocalT: gl.getUniformLocation(monoShader, "localTransform"),
         }
     };
 
@@ -193,6 +206,7 @@ var lastFrameTime = 0;
 var firstFrame = true;
 var pointerTable = null;
 var palette = new Float32Array(P_PALETTE_SIZE * 4);
+var globalTransformation = new Float32Array(16);
 var glSlots = Array(0x10000);
 
 var keys = {
@@ -253,8 +267,8 @@ function frame() {
 
             m32[ioBufferBase + ioBufferTop++] = P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE;
             m32[ioBufferBase + ioBufferTop++] = 
-                ((newCanvasWidth & 0xFFFF) >> 0) |
-                ((newCanvasHeight & 0xFFFF) >> 16);
+                ((newCanvasWidth & 0xFFFF) << 0) |
+                ((newCanvasHeight & 0xFFFF) << 16);
 
             lastCanvasWidth = newCanvasWidth;
             lastCanvasHeight = newCanvasHeight;
@@ -359,16 +373,33 @@ function frame() {
                 var index = (c >> 16) & 0xFFFF;
                 var startIndex = m32[ioBufferBase + currentTop++];
                 var length = m32[ioBufferBase + currentTop++];
+                var transformPointer = m32[ioBufferBase + currentTop++];
+
+                if((transformPointer / 4) % 1 != 0) {
+                    e("Unaligned local transformation.");
+                }
 
                 if(!glSlots[index]) {
                     e("Attempting to render an unfilled slot.");
                 }
 
+                var localTransformation = new Float32Array(
+                    wasm.instance.exports.memory.buffer,
+                    transformPointer,
+                    16
+                );
+
                 var buffer = glSlots[index];
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
 
+                var gTrans;
+                var lTrans;
+
                 if(type == P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE) {
+                    gTrans = glShaders.palette.uGlobalT;
+                    lTrans = glShaders.palette.uLocalT;
+
                     if(currentShader !== "palette") {
                         currentShader = "palette";
                         gl.useProgram(glShaders.palette.id);
@@ -392,8 +423,12 @@ function frame() {
                         0xC,
                         0x8
                     );
+
                     gl.uniform4fv(glShaders.palette.uPalette, palette);
                 } else if(type == P_OUTPUT_BUFFER_TYPE_VERTEX_MONO) {
+                    gTrans = glShaders.mono.uGlobalT;
+                    lTrans = glShaders.mono.uLocalT;
+
                     if(currentShader !== "mono") {
                         currentShader = "mono";
                         gl.useProgram(glShaders.mono.id);
@@ -411,12 +446,15 @@ function frame() {
 
                     gl.uniform4f(
                         glShaders.mono.uColor,
-                        palette[extra + 0],
-                        palette[extra + 1],
-                        palette[extra + 2],
-                        palette[extra + 3]
+                        palette[(extra*4) + 0],
+                        palette[(extra*4) + 1],
+                        palette[(extra*4) + 2],
+                        palette[(extra*4) + 3]
                     );
                 }
+
+                gl.uniformMatrix4fv(gTrans, false, globalTransformation);
+                gl.uniformMatrix4fv(lTrans, false, localTransformation);
 
                 gl.drawArrays(gl.TRIANGLES, startIndex, length);
 
@@ -431,6 +469,20 @@ function frame() {
 
                 var buffer = glSlots[index];
                 gl.deleteBuffer(buffer);
+
+                break;
+            };
+            case P_OUTPUT_BUFFER_COMMAND_SET_TRANSFORMATION: {
+                var pointer = m32[ioBufferBase + currentTop++] / 4;
+
+                if(pointer % 1 != 0) {
+                    e("Unaligned global transformation.");
+                }
+
+                var f32 = new Float32Array(wasm.instance.exports.memory.buffer);
+                for(var i = 0; i < 16; i++) {
+                    globalTransformation[i] = f32[pointer + i];
+                }
 
                 break;
             };

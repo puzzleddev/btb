@@ -44,7 +44,7 @@ B_INTERNAL const pPalette C_PALETTE0 = {
     C_PACK_COLOR(0xFF, 0x00, 0x00, 0xFF), /* 1 - Red */
     C_PACK_COLOR(0x00, 0xFF, 0x00, 0xFF), /* 2 - Green */
     C_PACK_COLOR(0x00, 0x00, 0xFF, 0xFF), /* 3 - Blue */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 4 - UNUSED */
+    C_PACK_COLOR(0xEE, 0xEE, 0xFF, 0xFF), /* 4 - Text Color */
     C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
     C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 6 - UNUSED */
     C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 7 - UNUSED */
@@ -91,6 +91,9 @@ B_INTERNAL pVertex C_TEST_VERTICES[] = {
     },
 };
 
+B_INTERNAL pTransformation C_IDENTITY = P_TRANSFORMATION_IDENTITY;
+B_INTERNAL pTransformation C_TEST_MAT = P_TRANSFORMATION_IDENTITY;
+
 #include "_pp.c"
 
 #define C_TITLE_MESH_VERTICES (sizeof(C_TITLE_MESH_F) / sizeof(pVertexMono))
@@ -106,24 +109,6 @@ B_INTERNAL char C_DEBUG_MESSAGE[] = "T is the value.";
 /* Utility */
 #define C_PI PREPROC_PI
 #define C_TAU (2*C_PI)
-
-#if 0
-B_INTERNAL const bF32 C_SINE_TABLE[] = PREPROC_SINE;
-
-B_INTERNAL bS32 cFloor(bF32 x) {
-    return __builtin_floorf(x);
-}
-B_INTERNAL bS32 cCeil(bF32 x) {
-    return __builtin_ceilf(x);
-}
-B_INTERNAL bF32 cFMod(bF32 x, bF32 y) {
-    const bF32 a = x/y;
-    return a - cFloor(a);
-}
-B_INTERNAL bF32 cLerp(bF32 x, bF32 y, bF32 a) {
-    return x * (1 - a) + y * a;
-}
-#endif
 
 /* Output interaction */
 void cPushOutputPalette(pOutputBuffer *io, const pPalette *palette) {
@@ -170,7 +155,8 @@ void cPushOutputRenderMesh(
     bU8 type,
     bU16 index,
     bU32 start,
-    bU32 length
+    bU32 length,
+    pTransformation *localT
 ) {
     io->stack[io->top++] = (
         ((bU32) P_OUTPUT_BUFFER_COMMAND_RENDER_MESH) |
@@ -179,11 +165,16 @@ void cPushOutputRenderMesh(
     );
     io->stack[io->top++] = start;
     io->stack[io->top++] = length;
+    io->stack[io->top++] = (bPointer) localT;
 }
 void cPushOutputDeleteMesh(pOutputBuffer *io, bU16 index) {
     io->stack[io->top++] = (
         ((bU32) P_OUTPUT_BUFFER_COMMAND_DELETE_MESH) | (((bU32) index) << 16)
     );
+}
+void cPushOutputSetGlobalTransform(pOutputBuffer *io, pTransformation *globalT) {
+    io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_SET_TRANSFORMATION;
+    io->stack[io->top++] = (bPointer) globalT;
 }
 void cPushOutputDebugError(pOutputBuffer *io, char *message) {
     io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW;
@@ -208,7 +199,7 @@ void cStartTitle(cStore *store, pOutputBuffer *io) {
 
     cPushOutputUploadMesh(
         io,
-        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (0x02 << 4),
+        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (0x01 << 4),
         0,
         C_TITLE_MESH_VERTICES,
         C_TITLE_MESH_F
@@ -218,6 +209,18 @@ void cSimulateTitle(cStore *store, pOutputBuffer *io, bF32 delta) {
     B_UNUSED(store);
     B_UNUSED(io);
     B_UNUSED(delta);
+
+    if(store->flags & C_FLAG_CANVAS_CHANGED) {
+        store->flags &= ~C_FLAG_CANVAS_CHANGED;
+
+        bF32 baseScale = 0.2;
+        bF32 asp = ((bF32)store->canvasWidth) / ((bF32)store->canvasHeight);
+
+        C_TEST_MAT[0] = baseScale / asp;
+        C_TEST_MAT[5] = -baseScale;
+        C_TEST_MAT[9] = baseScale;
+        cPushOutputSetGlobalTransform(io, &C_TEST_MAT);
+    }
 }
 void cStopTitle(cStore *store, pOutputBuffer *io) {
     B_UNUSED(store);
@@ -231,10 +234,11 @@ void cDrawTitle(cStore *store, pOutputBuffer *io, bF32 alpha) {
     cPushOutputClearColor(io, 0x0);
     cPushOutputRenderMesh(
         io,
-        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (0x02 << 4),
+        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (0x04 << 4),
         0,
         0,
-        C_TITLE_MESH_VERTICES
+        C_TITLE_MESH_VERTICES,
+        &C_IDENTITY
     );
 }
 
@@ -266,8 +270,8 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
             };
             case P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE: {
                 bU32 d = io->stack[currentTop++];
-                bU16 w = (d >> 0) | 0xFFFF;
-                bU16 h = (d >> 16) | 0xFFFF;
+                bU16 w = (d >> 0) & 0xFFFF;
+                bU16 h = (d >> 16) & 0xFFFF;
 
                 store->canvasWidth = w;
                 store->canvasHeight = h;

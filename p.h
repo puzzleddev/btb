@@ -30,6 +30,15 @@ typedef struct __attribute__((packed)) pVertexMono {
     bF32 y;
 } pVertexMono;
 
+/* @TODO: Push packed attribute into b.h */
+typedef bF32 pTransformation[16];
+#define P_TRANSFORMATION_IDENTITY (pTransformation) { \
+    1, 0, 0, 0, \
+    0, 1, 0, 0, \
+    0, 0, 1, 0, \
+    0, 0, 0, 1  \
+}
+
 #define P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE 0x01
 #define P_OUTPUT_BUFFER_TYPE_VERTEX_MONO 0x02
 
@@ -74,6 +83,7 @@ typedef struct __attribute__((packed)) pVertexMono {
  * - 0:2-3 - Index
  * - 1     - Start index
  * - 2     - Vertices to draw
+ * - 3     - Transformation pointer
  */
 #define P_OUTPUT_BUFFER_COMMAND_RENDER_MESH 0x04
 
@@ -96,6 +106,14 @@ typedef struct __attribute__((packed)) pVertexMono {
  * - 0:2-3 - Index
  */
 #define P_OUTPUT_BUFFER_COMMAND_DELETE_MESH 0x06
+
+/*
+ * Sets the global transformation.
+ *
+ * - 0:0 - Command byte
+ * - 1   - Transformation pointer.
+ */
+#define P_OUTPUT_BUFFER_COMMAND_SET_TRANSFORMATION 0x07
 
 /*
  * Throws a debug error.
