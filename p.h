@@ -82,7 +82,8 @@ typedef bF32 pTransformation[16];
  * - 0:1   - Type
  * - 0:2-3 - Index
  * - 1     - Start index
- * - 2     - Vertices to draw
+ * - 2:0-1 - Vertices to draw
+ * - 2:2-3 - Alpha
  * - 3     - Transformation pointer
  */
 #define P_OUTPUT_BUFFER_COMMAND_RENDER_MESH 0x04

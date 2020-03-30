@@ -30,6 +30,7 @@ var P_INPUT_BUFFER_COMMAND_SET_DPAD = 0x01;
 var P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE = 0x04;
 
 var VERT_SHADER = [
+    "uniform float alpha;",
     "uniform mat4 globalTransform;",
     "uniform mat4 localTransform;",
     "",
@@ -43,6 +44,7 @@ var VERT_SHADER = [
     "void main() {",
     "  gl_Position = globalTransform * localTransform * vec4(vPosition, 0, 1);",
     "  fColor = palette[int(vPaletteIndex)];",
+    "  fColor.a = alpha;",
     "}"
 ].join("\n");
 var FRAG_SHADER = [
@@ -56,6 +58,7 @@ var FRAG_SHADER = [
 ].join("\n");
 
 var VERT_SHADER_MONO = [
+    "uniform float alpha;",
     "uniform mat4 globalTransform;",
     "uniform mat4 localTransform;",
     "",
@@ -68,6 +71,7 @@ var VERT_SHADER_MONO = [
     "void main() {",
     "  gl_Position = globalTransform * localTransform * vec4(vPosition, 0, 1);",
     "  fColor = color;",
+    "  fColor.a = alpha;",
     "}"
 ].join("\n");
 var FRAG_SHADER_MONO = [
@@ -165,6 +169,7 @@ function main() {
             aPaletteIndex: gl.getAttribLocation(paletteShader, "vPaletteIndex"),
             uPalette: gl.getUniformLocation(paletteShader, "palette"),
 
+            uAlpha: gl.getUniformLocation(paletteShader, "alpha"),
             uGlobalT: gl.getUniformLocation(paletteShader, "globalTransform"),
             uLocalT: gl.getUniformLocation(paletteShader, "localTransform"),
         },
@@ -173,10 +178,16 @@ function main() {
             aPosition: gl.getAttribLocation(monoShader, "vPosition"),
             uColor: gl.getUniformLocation(monoShader, "color"),
 
+            uAlpha: gl.getUniformLocation(monoShader, "alpha"),
             uGlobalT: gl.getUniformLocation(monoShader, "globalTransform"),
             uLocalT: gl.getUniformLocation(monoShader, "localTransform"),
         }
     };
+
+    /* Set up GL state. */
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     window.addEventListener("keydown", function(e) {
         if(e.key == "w" || e.key == "ArrowUp") {
@@ -372,7 +383,9 @@ function frame() {
                 var extra = (typeExtra >> 4) & 0xF;
                 var index = (c >> 16) & 0xFFFF;
                 var startIndex = m32[ioBufferBase + currentTop++];
-                var length = m32[ioBufferBase + currentTop++];
+                var lengthAlpha = m32[ioBufferBase + currentTop++];
+                var length = lengthAlpha & 0xFFFF;
+                var alpha = (lengthAlpha >> 16) & 0xFFFF;
                 var transformPointer = m32[ioBufferBase + currentTop++];
 
                 if((transformPointer / 4) % 1 != 0) {
@@ -395,10 +408,12 @@ function frame() {
 
                 var gTrans;
                 var lTrans;
+                var uAlpha;
 
                 if(type == P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE) {
                     gTrans = glShaders.palette.uGlobalT;
                     lTrans = glShaders.palette.uLocalT;
+                    uAlpha = glShaders.palette.uAlpha;
 
                     if(currentShader !== "palette") {
                         currentShader = "palette";
@@ -428,6 +443,7 @@ function frame() {
                 } else if(type == P_OUTPUT_BUFFER_TYPE_VERTEX_MONO) {
                     gTrans = glShaders.mono.uGlobalT;
                     lTrans = glShaders.mono.uLocalT;
+                    uAlpha = glShaders.mono.uAlpha;
 
                     if(currentShader !== "mono") {
                         currentShader = "mono";
@@ -453,6 +469,7 @@ function frame() {
                     );
                 }
 
+                gl.uniform1f(uAlpha, alpha / 0xFFFF);
                 gl.uniformMatrix4fv(gTrans, false, globalTransformation);
                 gl.uniformMatrix4fv(lTrans, false, localTransformation);
 

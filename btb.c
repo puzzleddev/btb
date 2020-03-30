@@ -1,27 +1,78 @@
 #include "b.h"
 #include "p.h"
 
+/*
+ * General constants.
+ */
+
+#define C_SCALEX 0
+#define C_SCALEY 5
+#define C_SCALEZ 10
+#define C_SCALEW 15
+#define C_TRANSLATEX 12
+#define C_TRANSLATEY 13
+#define C_TRANSLATEZ 14
+
+#define C_PALETTE_MAX 1
+
+/* The confines of the assumed screen. */
 #define C_WIDTH ((bF32) 400)
 #define C_HEIGHT ((bF32) 300)
 #define C_ASPECT (C_WIDTH/C_HEIGHT)
 
+/*
+ * The maximum frame lag, everything above gets floored to this. This is done to
+ * make sure that we never have to execute too many cycles in one frame, as it
+ * puts an upper bound on it.
+ */
 #define C_FRAME_MAX ((bF32)0.25)
+
+/*
+ * The time a single cycle simulates.
+ */
 #define C_FRAME_DELTA (((bF32)1)/((bF32)30))
 
 typedef enum cStage {
+    /* Initial stage, all it does is upload basic data and switch to TITLE. */
     C_STAGE_INIT,
-    C_STAGE_TITLE
+
+    /*
+     * The title screen, initially only shows the title, but also includes the
+     * main menu. Once the 'play' button is pressed it transitions into the
+     * 'PLAY' stage.
+     */
+    C_STAGE_TITLE,
+
+    /* Plays the game, also includes the in-game pause menu. */
+    C_STAGE_PLAY,
 } cStage;
 
 #define C_FLAG_CANVAS_CHANGED 0x01
 
+typedef struct cStoreTitle {
+    pTransformation titleTransform;
+    bF32 accumulator;
+
+    bU8 lastLeft;
+    bU8 lastRight;
+
+    bF32 startTime;
+} cStoreTitle;
+
 typedef struct cStore {
-    bU32 state;
-    bU32 nextState;
+    bU32 stage;
+    bU32 nextStage;
     bF32 frameAccumulator;
     bF32 lastTime;
     bF64 simulatedTime;
 
+    /*
+     * This variable is used by the input system to signal that something has
+     * happened. The following flags are used:
+     *
+     * - C_FLAG_CANVAS_CHANGED - If the canvas size has changed or it is
+     *                           otherwise dirty.
+     */
     bU32 flags;
 
     bU8 dPadUp;
@@ -29,10 +80,20 @@ typedef struct cStore {
     bU8 dPadLeft;
     bU8 dPadRight;
 
+    /*
+     * The angle, the analog stick is held at, if it is not at the edge this is
+     * negative instead.
+     */
     bF32 stickAngle;
 
     bU16 canvasWidth;
     bU16 canvasHeight;
+
+    bU8 currentPalette;
+
+    union cStoreStageStore {
+        cStoreTitle title;
+    } stageStore;
 } cStore;
 
 #define C_PACK_COLOR(r, g, b, a) \
@@ -44,25 +105,46 @@ typedef struct cStore {
     )
 
 #define C_PALETTE_BACKGROUND 0x0
-#define C_PALETTE_FOREGROUND 0x4
+#define C_PALETTE_FOREGROUND 0x1
+#define C_PALETTE_BLACK      0xF
 
-B_INTERNAL const pPalette C_PALETTE0 = {
-    C_PACK_COLOR(0x00, 0x00, 0x08, 0xFF), /* 0 - Background */
-    C_PACK_COLOR(0xFF, 0x00, 0x00, 0xFF), /* 1 - Red */
-    C_PACK_COLOR(0x00, 0xFF, 0x00, 0xFF), /* 2 - Green */
-    C_PACK_COLOR(0x00, 0x00, 0xFF, 0xFF), /* 3 - Blue */
-    C_PACK_COLOR(0xCC, 0xCC, 0xFF, 0xFF), /* 4 - Foreground */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 6 - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 7 - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 8 - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 9 - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* A - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* B - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* C - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* D - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* E - UNUSED */
-    C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - UNUSED */
+B_INTERNAL const pPalette C_PALETTES[C_PALETTE_MAX + 1] = {
+    {
+        C_PACK_COLOR(0x00, 0x00, 0x08, 0xFF), /* 0 - Background */
+        C_PACK_COLOR(0xCC, 0xCC, 0xFF, 0xFF), /* 1 - Foreground */
+        C_PACK_COLOR(0x00, 0xFF, 0x00, 0xFF), /* 2 - High-Contrast */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 3 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 4 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 6 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 7 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 8 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 9 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* A - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* B - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* C - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* D - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* E - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - Black */
+    },
+    {
+        C_PACK_COLOR(0xCC, 0xCC, 0xFF, 0xFF), /* 0 - Background */
+        C_PACK_COLOR(0x00, 0x00, 0x08, 0xFF), /* 1 - Foreground */
+        C_PACK_COLOR(0x00, 0xFF, 0x00, 0xFF), /* 2 - High-Contrast */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 3 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 4 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 6 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 7 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 8 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 9 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* A - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* B - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* C - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* D - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* E - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - Black */
+    }
 };
 
 B_INTERNAL bF32 C_TEST_MESH[] = {
@@ -80,7 +162,6 @@ B_INTERNAL bF32 C_TEST_MESH[] = {
 
 B_INTERNAL pTransformation C_IDENTITY = P_TRANSFORMATION_IDENTITY;
 B_INTERNAL pTransformation C_GLOBAL_TRANS = P_TRANSFORMATION_IDENTITY;
-B_INTERNAL pTransformation C_TEST_TRANS = P_TRANSFORMATION_IDENTITY;
 
 #include "_pp.c"
 
@@ -89,7 +170,6 @@ B_INTERNAL bF32 C_TITLE_MESH[] = PREPROC_OBJ_TITLE;
 #define C_TITLE_MESH_FACES (C_TITLE_MESH_VERTICES / 3)
 #define C_TITLE_MESH_WIDTH (PREPROC_OBJ_TITLE_XMAX - PREPROC_OBJ_TITLE_XMIN)
 #define C_TITLE_MESH_HEIGHT (PREPROC_OBJ_TITLE_YMAX - PREPROC_OBJ_TITLE_YMIN)
-B_INTERNAL pTransformation C_TITLE_TRANSFORM = P_TRANSFORMATION_IDENTITY;
 
 B_INTERNAL const char *C_HEXCHARS = "0123456789ABCDEF";
 
@@ -145,7 +225,8 @@ void cPushOutputRenderMesh(
     bU8 type,
     bU16 index,
     bU32 start,
-    bU32 length,
+    bU16 length,
+    bU16 alpha,
     pTransformation *localT
 ) {
     io->stack[io->top++] = (
@@ -154,7 +235,10 @@ void cPushOutputRenderMesh(
         (((bU32) index) << 16)
     );
     io->stack[io->top++] = start;
-    io->stack[io->top++] = length;
+    io->stack[io->top++] = (
+        (((bU32) length) << 0) |
+        (((bU32) alpha) << 16)
+    );
     io->stack[io->top++] = (bPointer) localT;
 }
 void cPushOutputDeleteMesh(pOutputBuffer *io, bU16 index) {
@@ -190,31 +274,56 @@ B_INTERNAL void cComputeGlobalTransform(cStore *store, pTransformation *trans) {
     bF32 aspect = width / height;
 
     if(C_ASPECT < aspect) {
-        (*trans)[0] = (1.0f / aspect) / C_HEIGHT * 2;
-        (*trans)[5] = 1.0f / C_HEIGHT * 2;
+        (*trans)[C_SCALEX] = ((1.0f / aspect) / C_HEIGHT) * 2;
+        (*trans)[C_SCALEY] = (1.0f / C_HEIGHT) * 2;
 
-        (*trans)[12] = -1 + (aspect-C_ASPECT) * (1/aspect);
-        (*trans)[13] = -1;
+        (*trans)[C_TRANSLATEX] = -1 + (aspect-C_ASPECT) * (1/aspect);
+        (*trans)[C_TRANSLATEY] = -1;
     } else {
-        (*trans)[0] = 1.0f / C_WIDTH * 2;
-        (*trans)[5] = (aspect) / C_WIDTH * 2;
+        (*trans)[C_SCALEX] = (1.0f / C_WIDTH) * 2;
+        (*trans)[C_SCALEY] = (aspect / C_WIDTH) * 2;
 
-        (*trans)[12] = -1;
-        (*trans)[13] = -1 + (C_ASPECT-aspect) * (1/C_ASPECT);
+        (*trans)[C_TRANSLATEX] = -1;
+        (*trans)[C_TRANSLATEY] = -1 + (C_ASPECT-aspect) * (1/C_ASPECT);
     }
 }
 
-void cStartTitle(cStore *store, pOutputBuffer *io) {
-    B_UNUSED(store);
+/*
+ * ##### Title Stage ######
+ *
+ * This is the first proper stage, it has the following logic:
+ * 1. Display the title
+ * 2. Move it up and reveal the menu.
+ * 3. If a button is pressed (not an analog input) jump to the end.
+ * 4. Perform the menu.
+ */
 
-    C_TITLE_TRANSFORM[0] = 1.0f / (bF32)C_TITLE_MESH_WIDTH;
-    C_TITLE_TRANSFORM[5] = 1.0f / -(bF32)C_TITLE_MESH_WIDTH;
+/*
+ * How many seconds it takes the title to move up and the menu to become visible.
+ */
+#define C_STITLE_TIME_TO_MENU 2.0f
+/* The start and end positions for the move. */
+#define C_STITLE_TITLE_YSTART 150
+#define C_STITLE_TITLE_YEND   250
 
-    C_TITLE_TRANSFORM[0] *= C_WIDTH * 0.8;
-    C_TITLE_TRANSFORM[5] *= C_WIDTH * 0.8;
+void cStartTitle(cStore *cstore, pOutputBuffer *io) {
+    cStoreTitle *store = &cstore->stageStore.title;
 
-    C_TITLE_TRANSFORM[12] = 200;
-    C_TITLE_TRANSFORM[13] = 150;
+    store->startTime = cstore->simulatedTime;
+
+    store->accumulator = 0;
+
+    store->titleTransform[C_SCALEX] = 1.0f / (bF32)C_TITLE_MESH_WIDTH;
+    store->titleTransform[C_SCALEY] = 1.0f / -(bF32)C_TITLE_MESH_WIDTH;
+    store->titleTransform[C_SCALEZ] = 1.0f;
+    store->titleTransform[C_SCALEW] = 1.0f;
+
+    store->titleTransform[C_SCALEX] *= C_WIDTH * 0.8;
+    store->titleTransform[C_SCALEY] *= C_WIDTH * 0.8;
+
+    store->titleTransform[C_TRANSLATEX] = 200;
+    store->titleTransform[C_TRANSLATEY] = C_STITLE_TITLE_YSTART;
+    store->titleTransform[C_TRANSLATEZ] = -0.9;
 
     cPushOutputUploadMesh(
         io,
@@ -224,15 +333,40 @@ void cStartTitle(cStore *store, pOutputBuffer *io) {
         C_TITLE_MESH
     );
 }
-void cSimulateTitle(cStore *store, pOutputBuffer *io, bF32 delta) {
-    B_UNUSED(store);
-    B_UNUSED(io);
+void cSimulateTitle(cStore *cstore, pOutputBuffer *io, bF32 delta) {
     B_UNUSED(delta);
+    cStoreTitle *store = &cstore->stageStore.title;
 
-    if(store->flags & C_FLAG_CANVAS_CHANGED) {
-        store->flags &= ~C_FLAG_CANVAS_CHANGED;
+    bBool canChange = B_FALSE;
 
-        cComputeGlobalTransform(store, &C_GLOBAL_TRANS);
+    if(
+        store->lastLeft != cstore->dPadLeft ||
+        store->lastRight != cstore->dPadRight
+    ) {
+        canChange = B_TRUE;
+    }
+
+    store->lastLeft = cstore->dPadLeft;
+    store->lastRight = cstore->dPadRight;
+
+    bS8 nextPalette = cstore->currentPalette;
+
+    if(canChange && store->lastLeft) nextPalette--;
+    if(canChange && store->lastRight) nextPalette++;
+
+    if(nextPalette != cstore->currentPalette) {
+        if(nextPalette < 0) nextPalette = C_PALETTE_MAX;
+        else if(nextPalette > C_PALETTE_MAX) nextPalette = 0;
+
+        cPushOutputPalette(io, &C_PALETTES[nextPalette]);
+
+        cstore->currentPalette = nextPalette;
+    }
+
+    if(cstore->flags & C_FLAG_CANVAS_CHANGED) {
+        cstore->flags &= ~C_FLAG_CANVAS_CHANGED;
+
+        cComputeGlobalTransform(cstore, &C_GLOBAL_TRANS);
         cPushOutputSetGlobalTransform(io, &C_GLOBAL_TRANS);
     }
 }
@@ -242,9 +376,18 @@ void cStopTitle(cStore *store, pOutputBuffer *io) {
     cPushOutputDeleteMesh(io, 1);
     cPushOutputDeleteMesh(io, 0);
 }
-void cDrawTitle(cStore *store, pOutputBuffer *io, bF32 alpha) {
-    B_UNUSED(store);
+void cDrawTitle(cStore *cstore, pOutputBuffer *io, bF32 alpha) {
     B_UNUSED(alpha);
+    cStoreTitle *store = &cstore->stageStore.title;
+
+    if(cstore->lastTime - store->startTime >= C_STITLE_TIME_TO_MENU) {
+        store->titleTransform[C_TRANSLATEY] = C_STITLE_TITLE_YEND;
+    } else {
+        store->titleTransform[C_TRANSLATEY] =
+            C_STITLE_TITLE_YSTART + 
+            ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU) *
+            (C_STITLE_TITLE_YEND - C_STITLE_TITLE_YSTART);
+    }
 
     cPushOutputClearColor(io, C_PALETTE_BACKGROUND);
 
@@ -254,7 +397,8 @@ void cDrawTitle(cStore *store, pOutputBuffer *io, bF32 alpha) {
         0,
         0,
         C_TITLE_MESH_VERTICES,
-        &C_TITLE_TRANSFORM
+        0xFFFF,
+        &store->titleTransform
     );
 }
 
@@ -313,15 +457,15 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
      * We do initialization on the first possible frame, so this one case is
      * pulled out of the fixed-step update.
      */
-    if(store->state == C_STAGE_INIT) {
+    if(store->stage == C_STAGE_INIT) {
         /* First time initialization */
 
         /* A few things in state are not zero initialized: */
         store->stickAngle = -1;
 
-        cPushOutputPalette(io, &C_PALETTE0);
+        cPushOutputPalette(io, &C_PALETTES[0]);
 
-        store->nextState = C_STAGE_TITLE;
+        store->nextStage = C_STAGE_TITLE;
     }
 
     bU32 simulatedSteps = 0;
@@ -330,8 +474,8 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
     while(acc > C_FRAME_DELTA) {
         /* Fixed step here. */
 
-        if(store->nextState != store->state) {
-            switch(store->state) {
+        if(store->nextStage != store->stage) {
+            switch(store->stage) {
                 case C_STAGE_INIT: break;
                 case C_STAGE_TITLE:
                     cStopTitle(store, io);
@@ -341,9 +485,9 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
                     break;
             }
 
-            store->state = store->nextState;
+            store->stage = store->nextStage;
 
-            switch(store->state) {
+            switch(store->stage) {
                 case C_STAGE_TITLE:
                     cStartTitle(store, io);
                     break;
@@ -353,7 +497,7 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
             }
         }
 
-        switch(store->state) {
+        switch(store->stage) {
             case C_STAGE_TITLE:
                 cSimulateTitle(store, io, C_FRAME_DELTA);
                 break;
@@ -384,7 +528,7 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
 
     /* Variable step here. */
 
-    switch(store->state) {
+    switch(store->stage) {
         case C_STAGE_TITLE:
             cDrawTitle(store, io, 0);
             break;
