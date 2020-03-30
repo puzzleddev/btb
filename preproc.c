@@ -30,32 +30,45 @@ size_t objPushVertex(float x, float y) {
 
 #define PRINT_OBJ_LINE_SIZE 1024
 char printObjLine[PRINT_OBJ_LINE_SIZE];
-void printObj(FILE *out, const char *inName) {
+void printObj(FILE *out, const char *baseName, const char *inName) {
     FILE *in = fopen(inName, "r");
 
     objVertexStorageTop = 0;
 
-    fputc('{', out);
+    fprintf(out, "#define PREPROC_%s {", baseName);
 
     bool isFirst = true;
     (void)(isFirst);
+
+    float xMin = 0;
+    float xMax = 0;
+    float yMin = 0;
+    float yMax = 0;
 
     while(fgets(printObjLine, PRINT_OBJ_LINE_SIZE, in)) {
         if(printObjLine[0] == 'v') {
             float x = 0;
             float y = 0;
-            float z = 0;
 
             char *start = printObjLine + 2;
             char *nextStart;
             x = strtof(start, &nextStart);
-            y = strtof(nextStart, &start);
-            z = strtof(start, NULL);
+            strtof(nextStart, &start);
+            y = strtof(start, NULL);
 
-            (void)(x);
-            (void)(y);
-            (void)(z);
-            objPushVertex(x, z);
+            if(x < xMin) {
+                xMin = x;
+            } else if(x > xMax) {
+                xMax = x;
+            }
+
+            if(y < yMin) {
+                yMin = y;
+            } else if(y > yMax) {
+                yMax = y;
+            }
+
+            objPushVertex(x, y);
         } else if(printObjLine[0] == 'f') {
             int a = 0;
             int b = 0;
@@ -84,6 +97,20 @@ void printObj(FILE *out, const char *inName) {
     }
 
     fputc('}', out);
+    fputc('\n', out);
+
+    fprintf(
+        out,
+        "#define PREPROC_%s_XMIN %f\n"
+        "#define PREPROC_%s_XMAX %f\n"
+        "#define PREPROC_%s_YMIN %f\n"
+        "#define PREPROC_%s_YMAX %f\n",
+
+        baseName, xMin,
+        baseName, xMax,
+        baseName, yMin,
+        baseName, yMax
+    );
 
     fclose(in);
 }
@@ -113,9 +140,7 @@ int main(void) {
 
     /* Load OBJ's */
 
-    fprintf(includeFile, "#define PREPROC_OBJ_TITLE ");
-    printObj(includeFile, "../../data/title.obj");
-    fputc('\n', includeFile);
+    printObj(includeFile, "OBJ_TITLE", "../../data/title.obj");
 
     fclose(includeFile);
 
