@@ -24,6 +24,15 @@ typedef struct __attribute__((packed)) pVertex {
     bF32 p;
 } pVertex;
 
+/* @TODO: Push packed attribute into b.h */
+typedef struct __attribute__((packed)) pVertexMono {
+    bF32 x;
+    bF32 y;
+} pVertexMono;
+
+#define P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE 0x01
+#define P_OUTPUT_BUFFER_TYPE_VERTEX_MONO 0x02
+
 /*
  * These are not in an enum, because their actual values need to be kept in sync
  * with the JS side of things.
@@ -50,6 +59,7 @@ typedef struct __attribute__((packed)) pVertex {
  * Uploads a mesh and binds it to an index.
  *
  * - 0:0   - Command byte
+ * - 0:1   - Type
  * - 0:2-3 - Index
  * - 1     - Number of vertices.
  * - 2     - Vertex buffer pointer
@@ -60,6 +70,7 @@ typedef struct __attribute__((packed)) pVertex {
  * Renders a mesh with the current uniforms.
  *
  * - 0:0   - Command byte
+ * - 0:1   - Type
  * - 0:2-3 - Index
  * - 1     - Start index
  * - 2     - Vertices to draw
@@ -70,11 +81,21 @@ typedef struct __attribute__((packed)) pVertex {
  * Updates a mesh.
  *
  * - 0:0   - Command byte
+ * - 0:1   - Type
  * - 0:2-3 - Index
  * - 1     - Number of vertices
  * - 2     - Vertex buffer pointer
  */
 #define P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH 0x05
+
+/*
+ * Deletes a mesh.
+ *
+ * - 0:0   - Command byte
+ * - 0:1   - Type
+ * - 0:2-3 - Index
+ */
+#define P_OUTPUT_BUFFER_COMMAND_DELETE_MESH 0x06
 
 /*
  * Throws a debug error.

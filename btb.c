@@ -13,6 +13,7 @@ typedef enum cStage {
 
 typedef struct cStore {
     bU32 state;
+    bU32 nextState;
     bF32 frameAccumulator;
     bF32 lastTime;
     bF64 simulatedTime;
@@ -90,6 +91,13 @@ B_INTERNAL pVertex C_TEST_VERTICES[] = {
     },
 };
 
+#include "_pp.c"
+
+#define C_TITLE_MESH_VERTICES (sizeof(C_TITLE_MESH_F) / sizeof(pVertexMono))
+#define C_TITLE_MESH_FACES (C_TITLE_MESH_VERTICES / 3)
+B_INTERNAL bF32 C_TITLE_MESH_F[] = PREPROC_OBJ_TITLE;
+B_INTERNAL pVertexMono *C_TITLE_MESH = (pVertexMono *)C_TITLE_MESH_F;
+
 B_INTERNAL const char *C_HEXCHARS = "0123456789ABCDEF";
 
 B_INTERNAL char C_ITERATION_MESSAGE[] = "TTTT iterations simulated.";
@@ -98,8 +106,6 @@ B_INTERNAL char C_DEBUG_MESSAGE[] = "T is the value.";
 /* Utility */
 #define C_PI PREPROC_PI
 #define C_TAU (2*C_PI)
-
-#include "_pp.c"
 
 #if 0
 B_INTERNAL const bF32 C_SINE_TABLE[] = PREPROC_SINE;
@@ -131,39 +137,53 @@ void cPushOutputClearColor(pOutputBuffer *io, bU8 index) {
 }
 void cPushOutputUploadMesh(
     pOutputBuffer *io,
+    bU8 type,
     bU16 index,
     bU32 length,
-    pVertex *mesh
+    bF32 *mesh
 ) {
     io->stack[io->top++] = (
-        ((bU32) P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH) | (((bU32) index) << 16)
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH) |
+        (((bU32) type) << 8) |
+        (((bU32) index) << 16)
     );
     io->stack[io->top++] = length;
     io->stack[io->top++] = (bPointer) mesh;
 }
 void cPushOutputUpdateMesh(
     pOutputBuffer *io,
+    bU8 type,
     bU16 index,
     bU32 length,
-    pVertex *mesh
+    bF32 *mesh
 ) {
     io->stack[io->top++] = (
-        ((bU32) P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH) | (((bU32) index) << 16)
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH) |
+        (((bU32) type) << 8) |
+        (((bU32) index) << 16)
     );
     io->stack[io->top++] = length;
     io->stack[io->top++] = (bPointer) mesh;
 }
 void cPushOutputRenderMesh(
     pOutputBuffer *io,
+    bU8 type,
     bU16 index,
     bU32 start,
     bU32 length
 ) {
     io->stack[io->top++] = (
-        ((bU32) P_OUTPUT_BUFFER_COMMAND_RENDER_MESH) | (((bU32) index) << 16)
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_RENDER_MESH) |
+        (((bU32) type) << 8) |
+        (((bU32) index) << 16)
     );
     io->stack[io->top++] = start;
     io->stack[io->top++] = length;
+}
+void cPushOutputDeleteMesh(pOutputBuffer *io, bU16 index) {
+    io->stack[io->top++] = (
+        ((bU32) P_OUTPUT_BUFFER_COMMAND_DELETE_MESH) | (((bU32) index) << 16)
+    );
 }
 void cPushOutputDebugError(pOutputBuffer *io, char *message) {
     io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW;
@@ -183,17 +203,39 @@ void cPushOutputDebugPrint(pOutputBuffer *io, char *message) {
         cPushOutputDebugPrint((_io), (_msg)); \
     } while(B_FALSE)
 
+void cStartTitle(cStore *store, pOutputBuffer *io) {
+    B_UNUSED(store);
+
+    cPushOutputUploadMesh(
+        io,
+        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (0x02 << 4),
+        0,
+        C_TITLE_MESH_VERTICES,
+        C_TITLE_MESH_F
+    );
+}
 void cSimulateTitle(cStore *store, pOutputBuffer *io, bF32 delta) {
     B_UNUSED(store);
     B_UNUSED(io);
     B_UNUSED(delta);
+}
+void cStopTitle(cStore *store, pOutputBuffer *io) {
+    B_UNUSED(store);
+
+    cPushOutputDeleteMesh(io, 0);
 }
 void cDrawTitle(cStore *store, pOutputBuffer *io, bF32 alpha) {
     B_UNUSED(store);
     B_UNUSED(alpha);
 
     cPushOutputClearColor(io, 0x0);
-    cPushOutputRenderMesh(io, 0, 0, B_ARRAYLENGTH(C_TEST_VERTICES));
+    cPushOutputRenderMesh(
+        io,
+        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (0x02 << 4),
+        0,
+        0,
+        C_TITLE_MESH_VERTICES
+    );
 }
 
 void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
@@ -247,14 +289,57 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
     /* Reset the IO buffer for writing. */
     io->top = 0;
 
+    /*
+     * We do initialization on the first possible frame, so this one case is
+     * pulled out of the fixed-step update.
+     */
+    if(store->state == C_STAGE_INIT) {
+        /* First time initialization */
+
+        /* A few things in state are not zero initialized: */
+        store->stickAngle = -1;
+
+        cPushOutputPalette(io, &C_PALETTE0);
+
+        store->nextState = C_STAGE_TITLE;
+    }
+
     bU32 simulatedSteps = 0;
 
     acc += frameTime;
     while(acc > C_FRAME_DELTA) {
         /* Fixed step here. */
 
-        if(store->state == C_STAGE_TITLE) {
-            cSimulateTitle(store, io, C_FRAME_DELTA);
+        if(store->nextState != store->state) {
+            switch(store->state) {
+                case C_STAGE_INIT: break;
+                case C_STAGE_TITLE:
+                    cStopTitle(store, io);
+                    break;
+                default:
+                    C_THROW(io, "Unknown stage to stop.");
+                    break;
+            }
+
+            store->state = store->nextState;
+
+            switch(store->state) {
+                case C_STAGE_TITLE:
+                    cStartTitle(store, io);
+                    break;
+                default:
+                    C_THROW(io, "Unknown stage to start.");
+                    break;
+            }
+        }
+
+        switch(store->state) {
+            case C_STAGE_TITLE:
+                cSimulateTitle(store, io, C_FRAME_DELTA);
+                break;
+            default:
+                C_THROW(io, "Unknown stage to simulate.");
+                break;
         }
 
         acc -= C_FRAME_DELTA;
@@ -279,24 +364,12 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
 
     /* Variable step here. */
 
-    /*
-     * We do initialization on the first possible frame, so this one case is
-     * pulled out of the fixed-step update.
-     */
-    if(store->state == C_STAGE_INIT) {
-        /* First time initialization */
-
-        /* A few things in state are not zero initialized: */
-        store->stickAngle = -1;
-
-        cPushOutputPalette(io, &C_PALETTE0);
-
-        cPushOutputUploadMesh(io, 0, B_ARRAYLENGTH(C_TEST_VERTICES), C_TEST_VERTICES);
-
-        store->state = C_STAGE_TITLE;
-    }
-
-    if(store->state == C_STAGE_TITLE) {
-        cDrawTitle(store, io, 0);
+    switch(store->state) {
+        case C_STAGE_TITLE:
+            cDrawTitle(store, io, 0);
+            break;
+        default:
+            C_THROW(io, "Unknown stage to draw.");
+            break;
     }
 }

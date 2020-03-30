@@ -1,12 +1,12 @@
 @echo off
 setlocal
 cls
-set "outdir=docs"
+set "outdir=out"
 if not exist %outdir% md %outdir%
 if not exist %outdir%\tmp md %outdir%\tmp
 pushd %outdir%
 set "cflags=-Wall -Wextra -Werror -fvisibility=hidden"
-clang %cflags% ../preproc.c -o tmp/preproc.exe
+clang %cflags% -g ../preproc.c -o tmp/preproc.exe
 pushd tmp
 "preproc.exe"
 popd

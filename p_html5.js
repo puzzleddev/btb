@@ -13,13 +13,16 @@ function e(str) {
 }
 
 var P_PALETTE_SIZE = 0x10;
-var P_VERTEX_SIZE = 0x0C;
+
+var P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE = 0x01;
+var P_OUTPUT_BUFFER_TYPE_VERTEX_MONO = 0x02;
 
 var P_OUTPUT_BUFFER_COMMAND_SET_PALETTE = 0x01;
 var P_OUTPUT_BUFFER_COMMAND_CLEAR_COLOR = 0x02;
 var P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH = 0x03;
 var P_OUTPUT_BUFFER_COMMAND_RENDER_MESH = 0x04;
 var P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH = 0x05;
+var P_OUTPUT_BUFFER_COMMAND_DELETE_MESH = 0x06;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW = 0xF0;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_PRINT = 0xF1;
 var P_INPUT_BUFFER_COMMAND_SET_DPAD = 0x01;
@@ -35,11 +38,32 @@ var VERT_SHADER = [
     "",
     "void main() {",
     "  gl_Position = vec4(vPosition, 0, 1);",
-    //"  fColor = vec4(vPosition, 0, 0);",
     "  fColor = palette[int(vPaletteIndex)];",
     "}"
 ].join("\n");
 var FRAG_SHADER = [
+    "precision mediump float;",
+    "",
+    "varying vec4 fColor;",
+    "",
+    "void main() {",
+    "  gl_FragColor = fColor;",
+    "}"
+].join("\n");
+
+var VERT_SHADER_MONO = [
+    "uniform vec4 color;",
+    "",
+    "attribute vec2 vPosition;",
+    "",
+    "varying vec4 fColor;",
+    "",
+    "void main() {",
+    "  gl_Position = vec4(vPosition, 0, 1);",
+    "  fColor = color;",
+    "}"
+].join("\n");
+var FRAG_SHADER_MONO = [
     "precision mediump float;",
     "",
     "varying vec4 fColor;",
@@ -125,6 +149,7 @@ function main() {
 
     /* Create shaders: */
     var paletteShader = createShader(gl, VERT_SHADER, FRAG_SHADER);
+    var monoShader = createShader(gl, VERT_SHADER_MONO, FRAG_SHADER_MONO);
 
     window["glShaders"] = {
         palette: {
@@ -133,6 +158,11 @@ function main() {
             aPaletteIndex: gl.getAttribLocation(paletteShader, "vPaletteIndex"),
             uPalette: gl.getUniformLocation(paletteShader, "palette"),
         },
+        mono: {
+            id: monoShader,
+            aPosition: gl.getAttribLocation(monoShader, "vPosition"),
+            uColor: gl.getUniformLocation(monoShader, "color"),
+        }
     };
 
     window.addEventListener("keydown", function(e) {
@@ -236,14 +266,12 @@ function frame() {
     pointerTable = wasm.instance.exports.pHtml5Frame(now) / 4;
 
     if(pointerTable % 1 != 0) {
-        e("Unaligned pointer table: 0x" + (pointerTable * 4).toString(16).toUpperCase());
+        e("Unaligned pointer table: " + (pointerTable * 4).toString(16).toUpperCase());
     }
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
 
-    gl.useProgram(glShaders.palette.id);
-    gl.enableVertexAttribArray(glShaders.palette.aPosition);
-    gl.enableVertexAttribArray(glShaders.palette.aPaletteIndex);
+    var currentShader = "none";
 
     m32 = new Uint32Array(wasm.instance.exports.memory.buffer);
     ioBufferPointer = m32[pointerTable]/4;
@@ -287,6 +315,9 @@ function frame() {
             };
             case P_OUTPUT_BUFFER_COMMAND_UPDATE_MESH:
             case P_OUTPUT_BUFFER_COMMAND_UPLOAD_MESH: {
+                var typeExtra = (c >> 8) & 0xFF;
+                var type = (typeExtra >> 0) & 0xF;
+                var extra = (typeExtra >> 4) & 0xF;
                 var index = (c >> 16) & 0xFFFF;
                 var vertexNumber = m32[ioBufferBase + currentTop++];
                 var meshPointer = m32[ioBufferBase + currentTop++];
@@ -305,13 +336,15 @@ function frame() {
                     buffer = glSlots[index]
                 }
                 
+                var vertexSize = type == P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE ? 12 : 8;
+
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
                 gl.bufferData(
                     gl.ARRAY_BUFFER,
                     new Float32Array(
                         wasm.instance.exports.memory.buffer,
                         meshPointer,
-                        (vertexNumber * P_VERTEX_SIZE) / 4
+                        (vertexNumber * vertexSize) / 4
                     ),
                     gl.DYNAMIC_DRAW
                 );
@@ -320,6 +353,9 @@ function frame() {
                 break;
             };
             case P_OUTPUT_BUFFER_COMMAND_RENDER_MESH: {
+                var typeExtra = (c >> 8) & 0xFF;
+                var type = (typeExtra >> 0) & 0xF;
+                var extra = (typeExtra >> 4) & 0xF;
                 var index = (c >> 16) & 0xFFFF;
                 var startIndex = m32[ioBufferBase + currentTop++];
                 var length = m32[ioBufferBase + currentTop++];
@@ -331,25 +367,70 @@ function frame() {
                 var buffer = glSlots[index];
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-                gl.vertexAttribPointer(
-                    glShaders.palette.aPosition,
-                    2,
-                    gl.FLOAT,
-                    false,
-                    0xC,
-                    0
-                );
-                gl.vertexAttribPointer(
-                    glShaders.palette.aPaletteIndex,
-                    1,
-                    gl.FLOAT,
-                    false,
-                    0xC,
-                    0x8
-                );
-                gl.uniform4fv(glShaders.palette.uPalette, palette);
+
+                if(type == P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE) {
+                    if(currentShader !== "palette") {
+                        currentShader = "palette";
+                        gl.useProgram(glShaders.palette.id);
+                        gl.enableVertexAttribArray(glShaders.palette.aPosition);
+                        gl.enableVertexAttribArray(glShaders.palette.aPaletteIndex);
+                    }
+
+                    gl.vertexAttribPointer(
+                        glShaders.palette.aPosition,
+                        2,
+                        gl.FLOAT,
+                        false,
+                        0xC,
+                        0
+                    );
+                    gl.vertexAttribPointer(
+                        glShaders.palette.aPaletteIndex,
+                        1,
+                        gl.FLOAT,
+                        false,
+                        0xC,
+                        0x8
+                    );
+                    gl.uniform4fv(glShaders.palette.uPalette, palette);
+                } else if(type == P_OUTPUT_BUFFER_TYPE_VERTEX_MONO) {
+                    if(currentShader !== "mono") {
+                        currentShader = "mono";
+                        gl.useProgram(glShaders.mono.id);
+                        gl.enableVertexAttribArray(glShaders.mono.aPosition);
+                    }
+
+                    gl.vertexAttribPointer(
+                        glShaders.mono.aPosition,
+                        2,
+                        gl.FLOAT,
+                        false,
+                        0x8,
+                        0
+                    );
+
+                    gl.uniform4f(
+                        glShaders.mono.uColor,
+                        palette[extra + 0],
+                        palette[extra + 1],
+                        palette[extra + 2],
+                        palette[extra + 3]
+                    );
+                }
 
                 gl.drawArrays(gl.TRIANGLES, startIndex, length);
+
+                break;
+            };
+            case P_OUTPUT_BUFFER_COMMAND_DELETE_MESH: {
+                var index = (c >> 16) & 0xFFFF;
+
+                if(!glSlots[index]) {
+                    e("Attempting to delete and unfilled slot.");
+                }
+
+                var buffer = glSlots[index];
+                gl.deleteBuffer(buffer);
 
                 break;
             };
@@ -373,7 +454,7 @@ function frame() {
                 break;
             };
             default:
-                e("Unknown command 0x" + (c & 0xFF).toString(16));
+                e("Unknown command " + (c & 0xFF).toString(16));
         }
     }
 
