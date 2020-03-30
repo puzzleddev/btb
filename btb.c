@@ -1,6 +1,10 @@
 #include "b.h"
 #include "p.h"
 
+#define C_WIDTH ((bF32) 400)
+#define C_HEIGHT ((bF32) 300)
+#define C_ASPECT (C_WIDTH/C_HEIGHT)
+
 #define C_FRAME_MAX ((bF32)0.25)
 #define C_FRAME_DELTA (((bF32)1)/((bF32)30))
 
@@ -61,43 +65,21 @@ B_INTERNAL const pPalette C_PALETTE0 = {
     C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - UNUSED */
 };
 
-#define C_TEST_MESH_VERTICES B_ARRAYLENGTH(C_TEST_MESH_F)
-B_INTERNAL pVertex C_TEST_MESH_F[] = {
-    {
-        .x = 0,
-        .y = 1,
-        .p = 1,
-    },
-    {
-        .x = 0,
-        .y = 0,
-        .p = 1,
-    },
-    {
-        .x = 1,
-        .y = 0,
-        .p = 1,
-    },
-    {
-        .x = 1,
-        .y = 0,
-        .p = 2,
-    },
-    {
-        .x = 1,
-        .y = 1,
-        .p = 2,
-    },
-    {
-        .x = 0,
-        .y = 1,
-        .p = 2,
-    },
+B_INTERNAL bF32 C_TEST_MESH[] = {
+    0, 1, 1,
+    0, 0, 1,
+    1, 0, 1,
+    1, 0, 2,
+    1, 1, 2,
+    0, 1, 2
 };
-B_INTERNAL bF32 *C_TEST_MESH = (bF32 *) C_TEST_MESH_F;
+#define C_TEST_MESH_VERTICES (sizeof(C_TEST_MESH) / sizeof(pVertex))
+#define C_TEST_MESH_FACES (C_TEST_MESH_VERTICES / 3)
+#define C_TEST_MESH_WIDTH (1.0f)
+#define C_TEST_MESH_HEIGHT (1.0f)
 
 B_INTERNAL pTransformation C_IDENTITY = P_TRANSFORMATION_IDENTITY;
-B_INTERNAL pTransformation C_TEST_MAT = P_TRANSFORMATION_IDENTITY;
+B_INTERNAL pTransformation C_GLOBAL_TRANS = P_TRANSFORMATION_IDENTITY;
 B_INTERNAL pTransformation C_TEST_TRANS = P_TRANSFORMATION_IDENTITY;
 
 #include "_pp.c"
@@ -202,14 +184,34 @@ void cPushOutputDebugPrint(pOutputBuffer *io, char *message) {
         cPushOutputDebugPrint((_io), (_msg)); \
     } while(B_FALSE)
 
+B_INTERNAL void cComputeGlobalTransform(cStore *store, pTransformation *trans) {
+    bF32 width = store->canvasWidth;
+    bF32 height = store->canvasHeight;
+    bF32 aspect = width / height;
+
+    if(C_ASPECT < aspect) {
+        (*trans)[0] = (1.0f / aspect) / C_HEIGHT * 2;
+        (*trans)[5] = 1.0f / C_HEIGHT * 2;
+
+        (*trans)[12] = -1 + (aspect-C_ASPECT) * (1/aspect);
+        (*trans)[13] = -1;
+    } else {
+        (*trans)[0] = 1.0f / C_WIDTH * 2;
+        (*trans)[5] = (aspect) / C_WIDTH * 2;
+
+        (*trans)[12] = -1;
+        (*trans)[13] = -1 + (C_ASPECT-aspect) * (1/C_ASPECT);
+    }
+}
+
 void cStartTitle(cStore *store, pOutputBuffer *io) {
     B_UNUSED(store);
 
     C_TITLE_TRANSFORM[0] = 1.0f / (bF32)C_TITLE_MESH_WIDTH;
-    C_TITLE_TRANSFORM[5] = 1.0f / (bF32)C_TITLE_MESH_WIDTH;
+    C_TITLE_TRANSFORM[5] = 1.0f / -(bF32)C_TITLE_MESH_WIDTH;
 
-    C_TITLE_TRANSFORM[0] *= 200;
-    C_TITLE_TRANSFORM[5] *= -200;
+    C_TITLE_TRANSFORM[0] *= C_WIDTH * 0.8;
+    C_TITLE_TRANSFORM[5] *= C_WIDTH * 0.8;
 
     C_TITLE_TRANSFORM[12] = 200;
     C_TITLE_TRANSFORM[13] = 150;
@@ -221,17 +223,6 @@ void cStartTitle(cStore *store, pOutputBuffer *io) {
         C_TITLE_MESH_VERTICES,
         C_TITLE_MESH
     );
-
-    C_TEST_TRANS[0] *= 400;
-    C_TEST_TRANS[5] *= 300;
-
-    cPushOutputUploadMesh(
-        io,
-        P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE,
-        1,
-        C_TEST_MESH_VERTICES,
-        C_TEST_MESH
-    );
 }
 void cSimulateTitle(cStore *store, pOutputBuffer *io, bF32 delta) {
     B_UNUSED(store);
@@ -241,30 +232,8 @@ void cSimulateTitle(cStore *store, pOutputBuffer *io, bF32 delta) {
     if(store->flags & C_FLAG_CANVAS_CHANGED) {
         store->flags &= ~C_FLAG_CANVAS_CHANGED;
 
-        /* The aspect we want to use. */
-        bF32 emWidth = 400;
-        bF32 emHeight = 300;
-        bF32 emAspect = emWidth / emHeight;
-
-        bF32 width = store->canvasWidth;
-        bF32 height = store->canvasHeight;
-        bF32 aspect = width / height;
-
-        if(emAspect < aspect) {
-            C_TEST_MAT[0] = (1.0f / aspect) / emHeight * 2;
-            C_TEST_MAT[5] = 1.0f / emHeight * 2;
-
-            C_TEST_MAT[12] = -1 + (aspect-emAspect) * (1/aspect);
-            C_TEST_MAT[13] = -1;
-        } else {
-            C_TEST_MAT[0] = 1.0f / emWidth * 2;
-            C_TEST_MAT[5] = (aspect) / emWidth * 2;
-
-            C_TEST_MAT[12] = -1;
-            C_TEST_MAT[13] = -1 + (emAspect-aspect) * (1/emAspect);
-        }
-
-        cPushOutputSetGlobalTransform(io, &C_TEST_MAT);
+        cComputeGlobalTransform(store, &C_GLOBAL_TRANS);
+        cPushOutputSetGlobalTransform(io, &C_GLOBAL_TRANS);
     }
 }
 void cStopTitle(cStore *store, pOutputBuffer *io) {
@@ -278,15 +247,6 @@ void cDrawTitle(cStore *store, pOutputBuffer *io, bF32 alpha) {
     B_UNUSED(alpha);
 
     cPushOutputClearColor(io, C_PALETTE_BACKGROUND);
-
-    cPushOutputRenderMesh(
-        io,
-        P_OUTPUT_BUFFER_TYPE_VERTEX_PALETTE,
-        1,
-        0,
-        C_TEST_MESH_VERTICES,
-        &C_TEST_TRANS
-    );
 
     cPushOutputRenderMesh(
         io,
