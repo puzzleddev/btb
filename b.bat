@@ -5,7 +5,7 @@ set "outdir=out"
 if not exist %outdir% md %outdir%
 if not exist %outdir%\tmp md %outdir%\tmp
 pushd %outdir%
-set "cflags=-Wall -Wextra -Werror -fvisibility=hidden"
+set "cflags=-Wall -Wextra -Werror -fvisibility=hidden -Wno-unused-parameter -Wno-unused-function"
 clang %cflags% -g ../preproc.c -o tmp/preproc.exe
 pushd tmp
 "preproc.exe"

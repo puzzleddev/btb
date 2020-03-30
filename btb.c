@@ -13,8 +13,6 @@
 #define C_TRANSLATEY 13
 #define C_TRANSLATEZ 14
 
-#define C_PALETTE_MAX 1
-
 /* The confines of the assumed screen. */
 #define C_WIDTH ((bF32) 400)
 #define C_HEIGHT ((bF32) 300)
@@ -51,7 +49,10 @@ typedef enum cStage {
 
 typedef struct cStoreTitle {
     pTransformation titleTransform;
+    pTransformation playTransform;
     bF32 accumulator;
+    bF32 pulse;
+    bU32 isPulseExpanding;
 
     bU8 lastLeft;
     bU8 lastRight;
@@ -104,15 +105,21 @@ typedef struct cStore {
         (((bU32)a&0xFF) << 24) \
     )
 
+#define C_PALETTE_MAX 2
+
 #define C_PALETTE_BACKGROUND 0x0
 #define C_PALETTE_FOREGROUND 0x1
+/* A high-contrast color for debug purposes. In doubt FF00FF is viable. */
+#define C_PALETTE_HIGHCONTRAST 0x02
+/* This last color always has to be total black. */
 #define C_PALETTE_BLACK      0xF
 
 B_INTERNAL const pPalette C_PALETTES[C_PALETTE_MAX + 1] = {
+    /* White on black */
     {
         C_PACK_COLOR(0x00, 0x00, 0x08, 0xFF), /* 0 - Background */
         C_PACK_COLOR(0xCC, 0xCC, 0xFF, 0xFF), /* 1 - Foreground */
-        C_PACK_COLOR(0x00, 0xFF, 0x00, 0xFF), /* 2 - High-Contrast */
+        C_PACK_COLOR(0xFF, 0x00, 0xFF, 0xFF), /* 2 - High-Contrast */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 3 - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 4 - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
@@ -127,10 +134,11 @@ B_INTERNAL const pPalette C_PALETTES[C_PALETTE_MAX + 1] = {
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* E - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - Black */
     },
+    /* Black on white */
     {
         C_PACK_COLOR(0xCC, 0xCC, 0xFF, 0xFF), /* 0 - Background */
         C_PACK_COLOR(0x00, 0x00, 0x08, 0xFF), /* 1 - Foreground */
-        C_PACK_COLOR(0x00, 0xFF, 0x00, 0xFF), /* 2 - High-Contrast */
+        C_PACK_COLOR(0xFF, 0x00, 0xFF, 0xFF), /* 2 - High-Contrast */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 3 - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 4 - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
@@ -144,10 +152,29 @@ B_INTERNAL const pPalette C_PALETTES[C_PALETTE_MAX + 1] = {
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* D - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* E - UNUSED */
         C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - Black */
-    }
+    },
+    /* MAINFRAME */
+    {
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 0 - Background */
+        C_PACK_COLOR(0x00, 0xAA, 0x00, 0xFF), /* 1 - Foreground */
+        C_PACK_COLOR(0xFF, 0x00, 0xFF, 0xFF), /* 2 - High-Contrast */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 3 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 4 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 5 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 6 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 7 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 8 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* 9 - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* A - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* B - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* C - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* D - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* E - UNUSED */
+        C_PACK_COLOR(0x00, 0x00, 0x00, 0xFF), /* F - Black */
+    },
 };
 
-B_INTERNAL bF32 C_TEST_MESH[] = {
+B_INTERNAL bF32 C_SQUARE_MESH[] = {
     0, 1, 1,
     0, 0, 1,
     1, 0, 1,
@@ -155,10 +182,40 @@ B_INTERNAL bF32 C_TEST_MESH[] = {
     1, 1, 2,
     0, 1, 2
 };
-#define C_TEST_MESH_VERTICES (sizeof(C_TEST_MESH) / sizeof(pVertex))
-#define C_TEST_MESH_FACES (C_TEST_MESH_VERTICES / 3)
-#define C_TEST_MESH_WIDTH (1.0f)
-#define C_TEST_MESH_HEIGHT (1.0f)
+#define C_SQUARE_MESH_VERTICES (sizeof(C_SQUARE_MESH) / sizeof(pVertex))
+
+#define C_BLIND_DISTANCE 5000
+
+B_INTERNAL bF32 C_BLIND_MESH[] = {
+     C_BLIND_DISTANCE*0,            C_BLIND_DISTANCE*0,
+    -C_BLIND_DISTANCE*1,           -C_BLIND_DISTANCE*1,
+     C_BLIND_DISTANCE*1 + C_WIDTH, -C_BLIND_DISTANCE*1,
+     C_BLIND_DISTANCE*1 + C_WIDTH, -C_BLIND_DISTANCE*1,
+     C_BLIND_DISTANCE*0 + C_WIDTH,  C_BLIND_DISTANCE*0,
+     C_BLIND_DISTANCE*0,            C_BLIND_DISTANCE*0,
+
+     C_BLIND_DISTANCE*0 + C_WIDTH,  C_BLIND_DISTANCE*0,
+     C_BLIND_DISTANCE*1 + C_WIDTH, -C_BLIND_DISTANCE*1,
+     C_BLIND_DISTANCE*1 + C_WIDTH,  C_BLIND_DISTANCE*1 + C_HEIGHT,
+     C_BLIND_DISTANCE*1 + C_WIDTH,  C_BLIND_DISTANCE*1 + C_HEIGHT,
+     C_BLIND_DISTANCE*0 + C_WIDTH,  C_BLIND_DISTANCE*0 + C_HEIGHT,
+     C_BLIND_DISTANCE*0 + C_WIDTH,  C_BLIND_DISTANCE*0,
+
+     C_BLIND_DISTANCE*0 + C_WIDTH,  C_BLIND_DISTANCE*0 + C_HEIGHT,
+     C_BLIND_DISTANCE*1 + C_WIDTH,  C_BLIND_DISTANCE*1 + C_HEIGHT,
+    -C_BLIND_DISTANCE*1,            C_BLIND_DISTANCE*1 + C_HEIGHT,
+    -C_BLIND_DISTANCE*1,            C_BLIND_DISTANCE*1 + C_HEIGHT,
+     C_BLIND_DISTANCE*0,            C_BLIND_DISTANCE*0 + C_HEIGHT,
+     C_BLIND_DISTANCE*0 + C_WIDTH,  C_BLIND_DISTANCE*0 + C_HEIGHT,
+
+     C_BLIND_DISTANCE*0          ,  C_BLIND_DISTANCE*0 + C_HEIGHT,
+    -C_BLIND_DISTANCE*1          ,  C_BLIND_DISTANCE*1 + C_HEIGHT,
+    -C_BLIND_DISTANCE*1          , -C_BLIND_DISTANCE*1,
+    -C_BLIND_DISTANCE*1          , -C_BLIND_DISTANCE*1,
+     C_BLIND_DISTANCE*0          ,  C_BLIND_DISTANCE*0,
+     C_BLIND_DISTANCE*0          ,  C_BLIND_DISTANCE*0 + C_HEIGHT,
+};
+#define C_BLIND_MESH_VERTICES (sizeof(C_BLIND_MESH) / sizeof(pVertexMono))
 
 B_INTERNAL pTransformation C_IDENTITY = P_TRANSFORMATION_IDENTITY;
 B_INTERNAL pTransformation C_GLOBAL_TRANS = P_TRANSFORMATION_IDENTITY;
@@ -167,9 +224,13 @@ B_INTERNAL pTransformation C_GLOBAL_TRANS = P_TRANSFORMATION_IDENTITY;
 
 B_INTERNAL bF32 C_TITLE_MESH[] = PREPROC_OBJ_TITLE;
 #define C_TITLE_MESH_VERTICES (sizeof(C_TITLE_MESH) / sizeof(pVertexMono))
-#define C_TITLE_MESH_FACES (C_TITLE_MESH_VERTICES / 3)
 #define C_TITLE_MESH_WIDTH (PREPROC_OBJ_TITLE_XMAX - PREPROC_OBJ_TITLE_XMIN)
 #define C_TITLE_MESH_HEIGHT (PREPROC_OBJ_TITLE_YMAX - PREPROC_OBJ_TITLE_YMIN)
+
+B_INTERNAL bF32 C_PLAY_MESH[] = PREPROC_OBJ_TEXT_PLAY;
+#define C_PLAY_MESH_VERTICES (sizeof(C_TITLE_MESH) / sizeof(pVertexMono))
+#define C_PLAY_MESH_WIDTH (PREPROC_OBJ_TEXT_PLAY_XMAX - PREPROC_OBJ_TEXT_PLAY_XMIN)
+#define C_PLAY_MESH_HEIGHT (PREPROC_OBJ_TEXT_PLAY_YMAX - PREPROC_OBJ_TEXT_PLAY_YMIN)
 
 B_INTERNAL const char *C_HEXCHARS = "0123456789ABCDEF";
 
@@ -179,6 +240,22 @@ B_INTERNAL char C_DEBUG_MESSAGE[] = "T is the value.";
 /* Utility */
 #define C_PI PREPROC_PI
 #define C_TAU (2*C_PI)
+
+B_INTERNAL bF32 cLerp(bF32 start, bF32 end, bF32 alpha) {
+    return start + alpha * (end - start);
+}
+B_INTERNAL bF32 cQLerp(bF32 start, bF32 end, bF32 alpha) {
+    return cLerp(start, end, alpha*alpha);
+}
+B_INTERNAL bF32 cQEaseInOut(bF32 start, bF32 end, bF32 alpha) {
+    alpha *= 2;
+    if(alpha < 1) return (end - start) / 2 * alpha*alpha + start;
+    alpha -= 1;
+    return -(end - start)/2 * (alpha * (alpha - 2) - 1) + start;
+}
+B_INTERNAL bF32 cQEaseOut(bF32 start, bF32 end, bF32 alpha) {
+    return -(end - start) * alpha * (alpha - 2) + start;
+}
 
 /* Output interaction */
 void cPushOutputPalette(pOutputBuffer *io, const pPalette *palette) {
@@ -287,6 +364,17 @@ B_INTERNAL void cComputeGlobalTransform(cStore *store, pTransformation *trans) {
         (*trans)[C_TRANSLATEY] = -1 + (C_ASPECT-aspect) * (1/C_ASPECT);
     }
 }
+B_INTERNAL void cTransformTranslate(pTransformation *trans, bF32 x, bF32 y, bF32 z) {
+    (*trans)[C_TRANSLATEX] = x;
+    (*trans)[C_TRANSLATEY] = y;
+    (*trans)[C_TRANSLATEZ] = z;
+}
+B_INTERNAL void cTransformScale(pTransformation *trans, bF32 x, bF32 y, bF32 z) {
+    (*trans)[C_SCALEX] = x;
+    (*trans)[C_SCALEY] = y;
+    (*trans)[C_SCALEZ] = z;
+    (*trans)[C_SCALEW] = 1.0f;
+}
 
 /*
  * ##### Title Stage ######
@@ -305,6 +393,17 @@ B_INTERNAL void cComputeGlobalTransform(cStore *store, pTransformation *trans) {
 /* The start and end positions for the move. */
 #define C_STITLE_TITLE_YSTART 150
 #define C_STITLE_TITLE_YEND   250
+/* Start and end alpha of the menu. */
+#define C_STITLE_MENU_ASTART 0x0000
+#define C_STITLE_MENU_AEND 0xFFFF
+
+#define C_STITLE_PULSE_FREQ 0.5f
+#define C_STITLE_MENU_PULSE_MIN 1.0f
+#define C_STITLE_MENU_PULSE_MAX 1.1f
+
+#define C_STITLE_MESH_TITLE 0
+#define C_STITLE_MESH_BLIND 1
+#define C_STITLE_MESH_PLAY 2
 
 void cStartTitle(cStore *cstore, pOutputBuffer *io) {
     cStoreTitle *store = &cstore->stageStore.title;
@@ -312,25 +411,56 @@ void cStartTitle(cStore *cstore, pOutputBuffer *io) {
     store->startTime = cstore->simulatedTime;
 
     store->accumulator = 0;
+    store->pulse = 0;
 
-    store->titleTransform[C_SCALEX] = 1.0f / (bF32)C_TITLE_MESH_WIDTH;
-    store->titleTransform[C_SCALEY] = 1.0f / -(bF32)C_TITLE_MESH_WIDTH;
-    store->titleTransform[C_SCALEZ] = 1.0f;
-    store->titleTransform[C_SCALEW] = 1.0f;
+    cTransformScale(
+        &store->titleTransform,
+        (1.0f / (bF32)C_TITLE_MESH_WIDTH) * C_WIDTH * 0.9,
+        (1.0f / -(bF32)C_TITLE_MESH_WIDTH) * C_WIDTH * 0.9,
+        1.0f
+    );
+    cTransformTranslate(
+        &store->titleTransform,
+        C_WIDTH * 0.5,
+        C_STITLE_TITLE_YSTART,
+        -0.5
+    );
 
-    store->titleTransform[C_SCALEX] *= C_WIDTH * 0.8;
-    store->titleTransform[C_SCALEY] *= C_WIDTH * 0.8;
-
-    store->titleTransform[C_TRANSLATEX] = 200;
-    store->titleTransform[C_TRANSLATEY] = C_STITLE_TITLE_YSTART;
-    store->titleTransform[C_TRANSLATEZ] = -0.9;
+    cTransformScale(
+        &store->playTransform,
+         1.0f * C_WIDTH * 0.1,
+        -1.0f * C_WIDTH * 0.1,
+        1.0f
+    );
+    cTransformTranslate(
+        &store->playTransform,
+        C_WIDTH * 0.5,
+        C_HEIGHT * 0.4,
+        -0.0f
+    );
 
     cPushOutputUploadMesh(
         io,
         P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (C_PALETTE_FOREGROUND << 4),
-        0,
+        C_STITLE_MESH_TITLE,
         C_TITLE_MESH_VERTICES,
         C_TITLE_MESH
+    );
+
+    cPushOutputUploadMesh(
+        io,
+        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (C_PALETTE_BLACK << 4),
+        C_STITLE_MESH_BLIND,
+        C_BLIND_MESH_VERTICES,
+        C_BLIND_MESH
+    );
+
+    cPushOutputUploadMesh(
+        io,
+        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (C_PALETTE_FOREGROUND << 4),
+        C_STITLE_MESH_PLAY,
+        C_PLAY_MESH_VERTICES,
+        C_PLAY_MESH
     );
 }
 void cSimulateTitle(cStore *cstore, pOutputBuffer *io, bF32 delta) {
@@ -373,32 +503,95 @@ void cSimulateTitle(cStore *cstore, pOutputBuffer *io, bF32 delta) {
 void cStopTitle(cStore *store, pOutputBuffer *io) {
     B_UNUSED(store);
 
-    cPushOutputDeleteMesh(io, 1);
-    cPushOutputDeleteMesh(io, 0);
+    cPushOutputDeleteMesh(io, C_STITLE_MESH_BLIND);
+    cPushOutputDeleteMesh(io, C_STITLE_MESH_TITLE);
 }
 void cDrawTitle(cStore *cstore, pOutputBuffer *io, bF32 alpha) {
     B_UNUSED(alpha);
     cStoreTitle *store = &cstore->stageStore.title;
 
+    /* If any button is pressed, skip the animation. */
+    if(cstore->dPadUp || cstore->dPadDown || cstore->dPadLeft || cstore->dPadRight) {
+        store->startTime -= C_STITLE_TIME_TO_MENU;
+    }
+
+    bF32 menuAlpha = 0;
+
     if(cstore->lastTime - store->startTime >= C_STITLE_TIME_TO_MENU) {
         store->titleTransform[C_TRANSLATEY] = C_STITLE_TITLE_YEND;
+        menuAlpha = C_STITLE_MENU_AEND;
     } else {
-        store->titleTransform[C_TRANSLATEY] =
-            C_STITLE_TITLE_YSTART + 
-            ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU) *
-            (C_STITLE_TITLE_YEND - C_STITLE_TITLE_YSTART);
+        store->titleTransform[C_TRANSLATEY] = cQEaseOut(
+            C_STITLE_TITLE_YSTART,
+            C_STITLE_TITLE_YEND,
+            ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU)
+        );
+
+        menuAlpha = cQLerp(
+            C_STITLE_MENU_ASTART,
+            C_STITLE_MENU_AEND,
+            ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU)
+        );
     }
 
     cPushOutputClearColor(io, C_PALETTE_BACKGROUND);
 
     cPushOutputRenderMesh(
         io,
-        P_OUTPUT_BUFFER_TYPE_VERTEX_MONO | (C_PALETTE_FOREGROUND << 4),
-        0,
+        ((bU8) P_OUTPUT_BUFFER_TYPE_VERTEX_MONO) | (((bU8) C_PALETTE_FOREGROUND) << 4),
+        C_STITLE_MESH_TITLE,
         0,
         C_TITLE_MESH_VERTICES,
         0xFFFF,
         &store->titleTransform
+    );
+
+    cPushOutputRenderMesh(
+        io,
+        ((bU8) P_OUTPUT_BUFFER_TYPE_VERTEX_MONO) | (((bU8) C_PALETTE_BLACK) << 4),
+        C_STITLE_MESH_BLIND,
+        0,
+        C_BLIND_MESH_VERTICES,
+        0xFFFF,
+        &C_IDENTITY
+    );
+
+    bF32 pulseMultiplier = C_STITLE_MENU_PULSE_MIN;
+
+    if(cstore->lastTime - store->pulse >= C_STITLE_PULSE_FREQ) {
+        store->pulse = cstore->lastTime;
+        store->isPulseExpanding = !store->isPulseExpanding;
+    }
+
+    if(store->isPulseExpanding) {
+        pulseMultiplier = cQEaseInOut(
+            C_STITLE_MENU_PULSE_MIN,
+            C_STITLE_MENU_PULSE_MAX,
+            ((cstore->lastTime - store->pulse) / C_STITLE_PULSE_FREQ)
+        );
+    } else {
+        pulseMultiplier = cQEaseInOut(
+            C_STITLE_MENU_PULSE_MAX,
+            C_STITLE_MENU_PULSE_MIN,
+            ((cstore->lastTime - store->pulse) / C_STITLE_PULSE_FREQ)
+        );
+    }
+
+    cTransformScale(
+        &store->playTransform,
+         1.0f * C_WIDTH * 0.1 * pulseMultiplier,
+        -1.0f * C_WIDTH * 0.1 * pulseMultiplier,
+        1.0f
+    );
+
+    cPushOutputRenderMesh(
+        io,
+        ((bU8) P_OUTPUT_BUFFER_TYPE_VERTEX_MONO) | (((bU8) C_PALETTE_FOREGROUND) << 4),
+        C_STITLE_MESH_PLAY,
+        0,
+        C_PLAY_MESH_VERTICES,
+        menuAlpha,
+        &store->playTransform
     );
 }
 
@@ -463,7 +656,10 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
         /* A few things in state are not zero initialized: */
         store->stickAngle = -1;
 
-        cPushOutputPalette(io, &C_PALETTES[0]);
+        /* For blind debugging */
+        //store->currentPalette = 1;
+
+        cPushOutputPalette(io, &C_PALETTES[store->currentPalette]);
 
         store->nextStage = C_STAGE_TITLE;
     }

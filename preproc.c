@@ -141,6 +141,25 @@ int main(void) {
     /* Load OBJ's */
 
     printObj(includeFile, "OBJ_TITLE", "../../data/title.obj");
+    printObj(includeFile, "OBJ_TEXT_PLAY", "../../data/play.obj");
+    printObj(includeFile, "OBJ_SELECTOR", "../../data/selector.obj");
+
+    printObj(includeFile, "OBJ_HEX_0", "../../data/hex_0.obj");
+    printObj(includeFile, "OBJ_HEX_1", "../../data/hex_1.obj");
+    printObj(includeFile, "OBJ_HEX_2", "../../data/hex_2.obj");
+    printObj(includeFile, "OBJ_HEX_3", "../../data/hex_3.obj");
+    printObj(includeFile, "OBJ_HEX_4", "../../data/hex_4.obj");
+    printObj(includeFile, "OBJ_HEX_5", "../../data/hex_5.obj");
+    printObj(includeFile, "OBJ_HEX_6", "../../data/hex_6.obj");
+    printObj(includeFile, "OBJ_HEX_7", "../../data/hex_7.obj");
+    printObj(includeFile, "OBJ_HEX_8", "../../data/hex_8.obj");
+    printObj(includeFile, "OBJ_HEX_9", "../../data/hex_9.obj");
+    printObj(includeFile, "OBJ_HEX_A", "../../data/hex_A.obj");
+    printObj(includeFile, "OBJ_HEX_B", "../../data/hex_B.obj");
+    printObj(includeFile, "OBJ_HEX_C", "../../data/hex_C.obj");
+    printObj(includeFile, "OBJ_HEX_D", "../../data/hex_D.obj");
+    printObj(includeFile, "OBJ_HEX_E", "../../data/hex_E.obj");
+    printObj(includeFile, "OBJ_HEX_F", "../../data/hex_F.obj");
 
     fclose(includeFile);
 
