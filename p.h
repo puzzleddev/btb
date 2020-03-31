@@ -133,6 +133,14 @@ typedef bF32 pTransformation[16];
 #define P_OUTPUT_BUFFER_COMMAND_DEBUG_PRINT 0xF1
 
 /*
+ * Prints a debug float.
+ *
+ * - 0:0 - Command byte.
+ * - 1   - A 32 bit float.
+ */
+#define P_OUTPUT_BUFFER_COMMAND_DEBUG_FLOAT 0xF2
+
+/*
  * Sets the digital input state.
  *
  * - 0:0   - Command byte
@@ -162,6 +170,8 @@ typedef bF32 pTransformation[16];
  */
 #define P_INPUT_BUFFER_COMMAND_SET_MOUSE 0x03
 
+#define P_INPUT_BUFFER_COMMAND_SET_TOUCH 0x04
+
 /*
  * Signals a new canvas size.
  *
@@ -169,7 +179,7 @@ typedef bF32 pTransformation[16];
  * - 1:0-1 - Canvas width
  * - 1:2-3 - Canvas height
  */
-#define P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE 0x04
+#define P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE 0x05
 
 #define P_OUTPUT_BUFFER_LENGTH 0xFF
 typedef struct pOutputBuffer {

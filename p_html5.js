@@ -26,8 +26,10 @@ var P_OUTPUT_BUFFER_COMMAND_DELETE_MESH = 0x06;
 var P_OUTPUT_BUFFER_COMMAND_SET_TRANSFORMATION = 0x07;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_THROW = 0xF0;
 var P_OUTPUT_BUFFER_COMMAND_DEBUG_PRINT = 0xF1;
+var P_OUTPUT_BUFFER_COMMAND_DEBUG_FLOAT = 0xF2;
 var P_INPUT_BUFFER_COMMAND_SET_DPAD = 0x01;
-var P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE = 0x04;
+var P_INPUT_BUFFER_COMMAND_SET_MOUSE = 0x03;
+var P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE = 0x05;
 
 var VERT_SHADER = [
     "uniform float alpha;",
@@ -211,6 +213,34 @@ function main() {
             keys.right = false;
         }
     });
+
+    function writeMousePos(e) {
+        var bb = CANVAS.getBoundingClientRect();
+        var x = e.pageX - bb.left;
+        var y = e.pageY - bb.top;
+
+        mouse.x = x / bb.width;
+        mouse.y = y / bb.height;
+    }
+    window.addEventListener("mousemove", function(e) {
+        writeMousePos(e);
+    });
+    window.addEventListener("mousedown", function(e) {
+        writeMousePos(e);
+        if(e.button == 0) {
+            mouse.left = true;
+        } else if(e.button == 2) {
+            mouse.right = true;
+        }
+    });
+    window.addEventListener("mouseup", function(e) {
+        writeMousePos(e);
+        if(e.button == 0) {
+            mouse.left = false;
+        } else if(e.button == 2) {
+            mouse.right = false;
+        }
+    });
 }
 
 var lastFrameTime = 0;
@@ -227,6 +257,15 @@ var keys = {
     right: false,
 };
 var lastKeysWord = 0;
+var mouse = {
+    x: 0,
+    y: 0,
+    left: false,
+    right: false,
+};
+var lastMouseWord = 0;
+var lastMouseX = 0;
+var lastMouseY = 0;
 
 var lastCanvasWidth = 0;
 var lastCanvasHeight = 0;
@@ -250,6 +289,8 @@ function frame() {
         ioBufferBase = ioBufferPointer + 1;
         ioBufferTop = 0;
 
+        /* Keyboard input */
+
         var keysWord = 
             ((keys.up ? 0xFF: 0x00) << 0) |
             ((keys.down ? 0xFF: 0x00) << 8) |
@@ -261,6 +302,31 @@ function frame() {
             m32[ioBufferBase + ioBufferTop++] = keysWord;
             lastKeysWord = keysWord;
         }
+
+        /* Mouse input */
+
+        var mouseWord = 
+            ((P_INPUT_BUFFER_COMMAND_SET_MOUSE) << 0) |
+            ((mouse.left ? 0xFF : 0x00) << 8) | 
+            ((mouse.right ? 0xFF : 0x00) << 16);
+
+        if(
+            mouseWord != lastMouseWord ||
+            mouse.x != lastMouseX ||
+            mouse.y != lastMouseY
+        ) {
+            var f32 = new Float32Array(wasm.instance.exports.memory.buffer);
+
+            m32[ioBufferBase + ioBufferTop++] = mouseWord;
+            f32[ioBufferBase + ioBufferTop++] = mouse.x;
+            f32[ioBufferBase + ioBufferTop++] = mouse.y;
+
+            lastMouseWord = mouseWord;
+            lastMouseX = mouse.x;
+            lastMouseY = mouse.y;
+        }
+
+        /* Canvas input */
 
         var newCanvasWidth = CANVAS.clientWidth;
         var newCanvasHeight = CANVAS.clientHeight;
@@ -303,6 +369,9 @@ function frame() {
     ioBufferBase = ioBufferPointer + 1;
     ioBufferTop = m32[ioBufferPointer];
     currentTop = 0;
+
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
 
     while(ioBufferTop > currentTop) {
         var c = m32[ioBufferBase + currentTop++];
@@ -519,6 +588,14 @@ function frame() {
                 } else {
                     console.log(message);
                 }
+
+                break;
+            };
+            case P_OUTPUT_BUFFER_COMMAND_DEBUG_FLOAT: {
+                var f32 = new Float32Array(wasm.instance.exports.memory.buffer);
+                var message = f32[ioBufferBase + currentTop++];
+
+                console.log("DEBUG FLOAT: " + message);
 
                 break;
             };

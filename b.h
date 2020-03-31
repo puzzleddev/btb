@@ -219,12 +219,29 @@ B_CPP_END
 B_CPP_BEGIN
 
 /* Fix some MSVC problems. */
-#if B_COMP == B_COMP_MSVC || (B_COMP == B_COMP_CLANG && B_PLAT == B_PLAT_WIN32)
+#if B_COMP == B_COMP_MSVC || B_COMP == B_COMP_CLANG
+#if B_PLAT == B_PLAT_WIN32
 B_EXPORT int _fltused = 1;
-
 #pragma intrinsic(memset)
-void * __cdecl memset(void *_Dest, int _Val, bPointer _Size) {
-    bFillMemory(_Dest, _Size, (bByte)_Val);
+#endif
+
+/*
+ * <rant>
+ * Because clang decides to generate a call to a leaf function in here, instead
+ * of inlining it, like it should. Or even to understand that this is just a
+ * proxy function and optimizing calls to it out, we have to copy the memset
+ * code into it.
+ * </rant>
+ */
+#if B_COMP == B_COMP_MSVC
+void *__cdecl memset(void *_Dest, int _Val, bPointer _Size) {
+#elif B_COMP == B_COMP_CLANG
+void * memset(void *_Dest, int _Val, unsigned long _Size) {
+#endif
+    bByte *const c = _Dest;
+    for(bPointer i = 0; i < _Size; i++) {
+        c[i] = _Val;
+    }
     return _Dest;
 }
 #endif

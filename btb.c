@@ -45,20 +45,28 @@ typedef enum cStage {
     C_STAGE_PLAY,
 } cStage;
 
-#define C_FLAG_CANVAS_CHANGED 0x01
-
 typedef struct cStoreTitle {
     pTransformation titleTransform;
     pTransformation playTransform;
+
     bF32 accumulator;
     bF32 pulse;
-    bU32 isPulseExpanding;
+    bU8 isPulseExpanding;
+
+    bU8 isFadeInDone;
 
     bU8 lastLeft;
     bU8 lastRight;
 
+    bU8 lastMouseLeft;
+
     bF32 startTime;
 } cStoreTitle;
+
+#define C_FLAG_CANVAS_CHANGED 0x01
+#define C_FLAG_MOUSE_CHANGED 0x02
+#define C_FLAG_MOUSE_LEFT_PRESSED 0x04
+#define C_FLAG_MOUSE_RIGHT_PRESSED 0x08
 
 typedef struct cStore {
     bU32 stage;
@@ -73,6 +81,7 @@ typedef struct cStore {
      *
      * - C_FLAG_CANVAS_CHANGED - If the canvas size has changed or it is
      *                           otherwise dirty.
+     * - C_FLAG_MOUSE_CHANGED - If the mouse moved or clicked.
      */
     bU32 flags;
 
@@ -80,6 +89,9 @@ typedef struct cStore {
     bU8 dPadDown;
     bU8 dPadLeft;
     bU8 dPadRight;
+
+    bF32 mouseX;
+    bF32 mouseY;
 
     /*
      * The angle, the analog stick is held at, if it is not at the edge this is
@@ -218,6 +230,12 @@ B_INTERNAL bF32 C_BLIND_MESH[] = {
 #define C_BLIND_MESH_VERTICES (sizeof(C_BLIND_MESH) / sizeof(pVertexMono))
 
 B_INTERNAL pTransformation C_IDENTITY = P_TRANSFORMATION_IDENTITY;
+B_INTERNAL pTransformation C_BLIND_TRANS = {
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, -1, 1
+};
 B_INTERNAL pTransformation C_GLOBAL_TRANS = P_TRANSFORMATION_IDENTITY;
 
 #include "_pp.c"
@@ -228,7 +246,7 @@ B_INTERNAL bF32 C_TITLE_MESH[] = PREPROC_OBJ_TITLE;
 #define C_TITLE_MESH_HEIGHT (PREPROC_OBJ_TITLE_YMAX - PREPROC_OBJ_TITLE_YMIN)
 
 B_INTERNAL bF32 C_PLAY_MESH[] = PREPROC_OBJ_TEXT_PLAY;
-#define C_PLAY_MESH_VERTICES (sizeof(C_TITLE_MESH) / sizeof(pVertexMono))
+#define C_PLAY_MESH_VERTICES (sizeof(C_PLAY_MESH) / sizeof(pVertexMono))
 #define C_PLAY_MESH_WIDTH (PREPROC_OBJ_TEXT_PLAY_XMAX - PREPROC_OBJ_TEXT_PLAY_XMIN)
 #define C_PLAY_MESH_HEIGHT (PREPROC_OBJ_TEXT_PLAY_YMAX - PREPROC_OBJ_TEXT_PLAY_YMIN)
 
@@ -344,6 +362,15 @@ void cPushOutputDebugPrint(pOutputBuffer *io, char *message) {
     do { \
         cPushOutputDebugPrint((_io), (_msg)); \
     } while(B_FALSE)
+void cPushOutputDebugFloat(pOutputBuffer *io, bF32 f) {
+    bF32 *floatStack = (bF32*) &io->stack;
+    io->stack[io->top++] = P_OUTPUT_BUFFER_COMMAND_DEBUG_FLOAT;
+    floatStack[io->top++] = f;
+}
+#define C_PRINT_FLOAT(_io, _msg) \
+    do { \
+        cPushOutputDebugFloat((_io), (_msg)); \
+    } while(B_FALSE)
 
 B_INTERNAL void cComputeGlobalTransform(cStore *store, pTransformation *trans) {
     bF32 width = store->canvasWidth;
@@ -375,6 +402,23 @@ B_INTERNAL void cTransformScale(pTransformation *trans, bF32 x, bF32 y, bF32 z) 
     (*trans)[C_SCALEZ] = z;
     (*trans)[C_SCALEW] = 1.0f;
 }
+/*
+ * @NOTE: This only deals with translation and scaling, everything else is
+ * ignored intentionally.
+ */
+B_INTERNAL void cPerform2DInverseTransform(pTransformation *trans, bF32 *px, bF32 *py) {
+    bF32 x = *px;
+    bF32 y = *py;
+
+    bF32 a = 1.0f / (*trans)[0];
+    bF32 d = -1 * (*trans)[12];
+    bF32 f = 1.0f / (*trans)[5];
+    bF32 h = -1 * (*trans)[13];
+
+    /* @TODO: This isn't correct*/
+    *px = a*x + d*1 + (C_WIDTH / 2);
+    *py = f*y + h*1 + (C_HEIGHT / 2);
+}
 
 /*
  * ##### Title Stage ######
@@ -405,13 +449,14 @@ B_INTERNAL void cTransformScale(pTransformation *trans, bF32 x, bF32 y, bF32 z) 
 #define C_STITLE_MESH_BLIND 1
 #define C_STITLE_MESH_PLAY 2
 
+#define C_STITLE_PLAY_BASE_SCALE ((1.0f / (bF32)C_PLAY_MESH_WIDTH) * C_WIDTH * 0.2)
+
 void cStartTitle(cStore *cstore, pOutputBuffer *io) {
     cStoreTitle *store = &cstore->stageStore.title;
 
-    store->startTime = cstore->simulatedTime;
+    bFillMemory(store, sizeof(*store), 0);
 
-    store->accumulator = 0;
-    store->pulse = 0;
+    store->startTime = cstore->simulatedTime;
 
     cTransformScale(
         &store->titleTransform,
@@ -423,20 +468,20 @@ void cStartTitle(cStore *cstore, pOutputBuffer *io) {
         &store->titleTransform,
         C_WIDTH * 0.5,
         C_STITLE_TITLE_YSTART,
-        -0.5
+        0.0f
     );
 
     cTransformScale(
         &store->playTransform,
-         1.0f * C_WIDTH * 0.1,
-        -1.0f * C_WIDTH * 0.1,
+        C_STITLE_PLAY_BASE_SCALE,
+        -C_STITLE_PLAY_BASE_SCALE,
         1.0f
     );
     cTransformTranslate(
         &store->playTransform,
         C_WIDTH * 0.5,
         C_HEIGHT * 0.4,
-        -0.0f
+        0.5f
     );
 
     cPushOutputUploadMesh(
@@ -467,13 +512,13 @@ void cSimulateTitle(cStore *cstore, pOutputBuffer *io, bF32 delta) {
     B_UNUSED(delta);
     cStoreTitle *store = &cstore->stageStore.title;
 
-    bBool canChange = B_FALSE;
+    bBool canChangePalette = B_FALSE;
 
     if(
         store->lastLeft != cstore->dPadLeft ||
         store->lastRight != cstore->dPadRight
     ) {
-        canChange = B_TRUE;
+        canChangePalette = B_TRUE;
     }
 
     store->lastLeft = cstore->dPadLeft;
@@ -481,8 +526,8 @@ void cSimulateTitle(cStore *cstore, pOutputBuffer *io, bF32 delta) {
 
     bS8 nextPalette = cstore->currentPalette;
 
-    if(canChange && store->lastLeft) nextPalette--;
-    if(canChange && store->lastRight) nextPalette++;
+    if(canChangePalette && store->lastLeft) nextPalette--;
+    if(canChangePalette && store->lastRight) nextPalette++;
 
     if(nextPalette != cstore->currentPalette) {
         if(nextPalette < 0) nextPalette = C_PALETTE_MAX;
@@ -493,46 +538,74 @@ void cSimulateTitle(cStore *cstore, pOutputBuffer *io, bF32 delta) {
         cstore->currentPalette = nextPalette;
     }
 
-    if(cstore->flags & C_FLAG_CANVAS_CHANGED) {
-        cstore->flags &= ~C_FLAG_CANVAS_CHANGED;
+    bBool canClick = B_FALSE;
 
-        cComputeGlobalTransform(cstore, &C_GLOBAL_TRANS);
-        cPushOutputSetGlobalTransform(io, &C_GLOBAL_TRANS);
+    if(store->lastMouseLeft != (cstore->flags & C_FLAG_MOUSE_LEFT_PRESSED)) {
+        canClick = B_TRUE;
     }
+    store->lastMouseLeft = cstore->flags & C_FLAG_MOUSE_LEFT_PRESSED;
 }
 void cStopTitle(cStore *store, pOutputBuffer *io) {
     B_UNUSED(store);
 
     cPushOutputDeleteMesh(io, C_STITLE_MESH_BLIND);
     cPushOutputDeleteMesh(io, C_STITLE_MESH_TITLE);
+    cPushOutputDeleteMesh(io, C_STITLE_MESH_PLAY);
 }
 void cDrawTitle(cStore *cstore, pOutputBuffer *io, bF32 alpha) {
     B_UNUSED(alpha);
     cStoreTitle *store = &cstore->stageStore.title;
 
+    if(cstore->flags & C_FLAG_CANVAS_CHANGED) {
+        cstore->flags &= ~C_FLAG_CANVAS_CHANGED;
+
+        cComputeGlobalTransform(cstore, &C_GLOBAL_TRANS);
+        cPushOutputSetGlobalTransform(io, &C_GLOBAL_TRANS);
+    }
+
     /* If any button is pressed, skip the animation. */
-    if(cstore->dPadUp || cstore->dPadDown || cstore->dPadLeft || cstore->dPadRight) {
-        store->startTime -= C_STITLE_TIME_TO_MENU;
+    if(
+        cstore->dPadUp || cstore->dPadDown || cstore->dPadLeft || cstore->dPadRight ||
+        cstore->flags & (C_FLAG_MOUSE_LEFT_PRESSED | C_FLAG_MOUSE_RIGHT_PRESSED)
+    ) {
+        store->isFadeInDone = B_TRUE;
     }
 
-    bF32 menuAlpha = 0;
+    bF32 titleY = C_STITLE_TITLE_YEND;
+    bF32 menuAlpha = C_STITLE_MENU_AEND;
 
-    if(cstore->lastTime - store->startTime >= C_STITLE_TIME_TO_MENU) {
-        store->titleTransform[C_TRANSLATEY] = C_STITLE_TITLE_YEND;
-        menuAlpha = C_STITLE_MENU_AEND;
-    } else {
-        store->titleTransform[C_TRANSLATEY] = cQEaseOut(
-            C_STITLE_TITLE_YSTART,
-            C_STITLE_TITLE_YEND,
-            ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU)
-        );
+    if(!store->isFadeInDone) {
+        if(cstore->lastTime - store->startTime >= C_STITLE_TIME_TO_MENU) {
+            store->isFadeInDone = B_TRUE;
+        } else {
+            titleY = cQEaseOut(
+                C_STITLE_TITLE_YSTART,
+                C_STITLE_TITLE_YEND,
+                ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU)
+            );
 
-        menuAlpha = cQLerp(
-            C_STITLE_MENU_ASTART,
-            C_STITLE_MENU_AEND,
-            ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU)
-        );
+            menuAlpha = cQLerp(
+                C_STITLE_MENU_ASTART,
+                C_STITLE_MENU_AEND,
+                ((cstore->lastTime - store->startTime) / C_STITLE_TIME_TO_MENU)
+            );
+        }
     }
+
+#if 0
+    /* Example of reverse transforming. */
+    if(cstore->flags & C_FLAG_MOUSE_LEFT_PRESSED) {
+        bF32 mx = cstore->mouseX;
+        bF32 my = cstore->mouseY;
+
+        cPerform2DInverseTransform(&C_GLOBAL_TRANS, &mx, &my);
+
+        store->titleTransform[C_TRANSLATEX] = mx;
+        titleY = my;
+    }
+#endif
+
+    store->titleTransform[C_TRANSLATEY] = titleY;
 
     cPushOutputClearColor(io, C_PALETTE_BACKGROUND);
 
@@ -553,7 +626,7 @@ void cDrawTitle(cStore *cstore, pOutputBuffer *io, bF32 alpha) {
         0,
         C_BLIND_MESH_VERTICES,
         0xFFFF,
-        &C_IDENTITY
+        &C_BLIND_TRANS
     );
 
     bF32 pulseMultiplier = C_STITLE_MENU_PULSE_MIN;
@@ -579,8 +652,8 @@ void cDrawTitle(cStore *cstore, pOutputBuffer *io, bF32 alpha) {
 
     cTransformScale(
         &store->playTransform,
-         1.0f * C_WIDTH * 0.1 * pulseMultiplier,
-        -1.0f * C_WIDTH * 0.1 * pulseMultiplier,
+        C_STITLE_PLAY_BASE_SCALE * pulseMultiplier,
+        -C_STITLE_PLAY_BASE_SCALE * pulseMultiplier,
         1.0f
     );
 
@@ -609,6 +682,8 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
     /* Handle input. */
     bU32 currentTop = 0;
 
+    bF32 *floatStack = (bF32*) &io->stack;
+
     while(currentTop < io->top) {
         bU32 c = io->stack[currentTop++];
 
@@ -619,6 +694,21 @@ void cFrame(pStore *pstore, pOutputBuffer *io, bF32 now) {
                 store->dPadDown = (d >> 8) & 0xFF;
                 store->dPadLeft = (d >> 16) & 0xFF;
                 store->dPadRight = (d >> 24) & 0xFF;
+                break;
+            };
+            case P_INPUT_BUFFER_COMMAND_SET_MOUSE: {
+                bF32 x = floatStack[currentTop++];
+                bF32 y = floatStack[currentTop++];
+
+                bBool left = (c >> 8) & 0x01;
+                bBool right = (c >> 16) & 0x01;
+
+                store->flags |= C_FLAG_MOUSE_CHANGED;
+                store->flags &= ~(C_FLAG_MOUSE_LEFT_PRESSED | C_FLAG_MOUSE_RIGHT_PRESSED);
+                store->flags |= C_FLAG_MOUSE_LEFT_PRESSED * left;
+                store->flags |= C_FLAG_MOUSE_RIGHT_PRESSED * right;
+                store->mouseX = (x-0.5)*2;
+                store->mouseY = ((y-0.5)*2)*-1;
                 break;
             };
             case P_INPUT_BUFFER_COMMAND_SET_CANVAS_SIZE: {
