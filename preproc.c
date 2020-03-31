@@ -142,7 +142,9 @@ int main(void) {
 
     printObj(includeFile, "OBJ_TITLE", "../../data/title.obj");
     printObj(includeFile, "OBJ_TEXT_PLAY", "../../data/play.obj");
+    printObj(includeFile, "OBJ_TEXT_PALETTE", "../../data/palette.obj");
     printObj(includeFile, "OBJ_SELECTOR", "../../data/selector.obj");
+    printObj(includeFile, "OBJ_SPACEMAN", "../../data/proto_spaceman.obj");
 
     printObj(includeFile, "OBJ_HEX_0", "../../data/hex_0.obj");
     printObj(includeFile, "OBJ_HEX_1", "../../data/hex_1.obj");

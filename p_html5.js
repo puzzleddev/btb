@@ -455,7 +455,10 @@ function frame() {
                 var lengthAlpha = m32[ioBufferBase + currentTop++];
                 var length = lengthAlpha & 0xFFFF;
                 var alpha = (lengthAlpha >> 16) & 0xFFFF;
-                var transformPointer = m32[ioBufferBase + currentTop++];
+                currentTop++; // Skip reserved
+                //var transformPointer = m32[ioBufferBase + currentTop++];
+                var transformPointer = (ioBufferBase + currentTop) * 4;
+                currentTop += 16;
 
                 if((transformPointer / 4) % 1 != 0) {
                     e("Unaligned local transformation.");
@@ -555,6 +558,7 @@ function frame() {
 
                 var buffer = glSlots[index];
                 gl.deleteBuffer(buffer);
+                glSlots[index] = undefined;
 
                 break;
             };
